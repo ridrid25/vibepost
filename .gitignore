@@ -2,6 +2,8 @@
 .env
 .env.local
 *.env
+ПАРОЛИ.local.md
+*.local.md
 
 # Служебное
 node_modules/
