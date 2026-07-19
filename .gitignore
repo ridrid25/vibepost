@@ -1,0 +1,17 @@
+# Секреты — никогда не коммитить
+.env
+.env.local
+*.env
+
+# Служебное
+node_modules/
+.supabase/
+supabase/.temp/
+dist/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Старые версии файлов
+_архив/

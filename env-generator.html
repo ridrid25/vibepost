@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VibePost — настройка .env</title>
+<style>
+  :root{
+    --blue:#3B82F6; --blue-dark:#2563EB; --bg:#F8FAFC; --card:#FFFFFF;
+    --ink:#0F172A; --muted:#64748B; --line:#E2E8F0; --ok:#10B981; --warn:#F59E0B;
+    --mono:'Consolas','Cascadia Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--ink);padding-bottom:120px}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px}
+  header{margin-bottom:28px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);font-weight:600;margin-bottom:8px}
+  h1{font-size:28px;font-weight:700;letter-spacing:-.02em}
+  .lead{color:var(--muted);margin-top:8px;font-size:15px;line-height:1.55}
+  .privacy{display:flex;gap:10px;align-items:flex-start;background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 14px;margin-top:16px;font-size:13.5px;color:#1E40AF;line-height:1.5}
+  .privacy svg{flex-shrink:0;margin-top:1px}
+  section.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 22px 8px;margin-bottom:18px}
+  .card h2{font-size:16px;font-weight:700;display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .badge{font-size:11px;font-weight:600;color:var(--muted);background:var(--bg);border:1px solid var(--line);border-radius:99px;padding:2px 10px}
+  .badge.done{color:#047857;background:#ECFDF5;border-color:#A7F3D0}
+  .card .sub{font-size:13px;color:var(--muted);margin-bottom:16px}
+  .field{margin-bottom:18px}
+  label{display:block;font-size:13.5px;font-weight:600;margin-bottom:4px}
+  .hint{font-size:12.5px;color:var(--muted);margin-bottom:7px;line-height:1.5}
+  .hint b{color:#475569;font-weight:600}
+  .inrow{display:flex;gap:8px}
+  input{width:100%;font-size:14px;padding:10px 12px;border:1.5px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);font-family:var(--mono);outline:none;transition:border-color .15s}
+  input:focus{border-color:var(--blue)}
+  input.filled{border-color:#86EFAC}
+  input.warn{border-color:var(--warn)}
+  .msg{font-size:12px;margin-top:5px;min-height:15px}
+  .msg.ok{color:var(--ok)} .msg.warn{color:#B45309}
+  button{font-family:inherit;cursor:pointer;border:none;border-radius:9px;font-weight:600}
+  .ghost{background:var(--bg);border:1.5px solid var(--line);color:#475569;font-size:13px;padding:0 14px;white-space:nowrap}
+  .ghost:hover{border-color:var(--blue);color:var(--blue)}
+  .eye{background:var(--bg);border:1.5px solid var(--line);width:44px;flex-shrink:0;color:#64748B;font-size:16px}
+  .eye:hover{border-color:var(--blue)}
+  .preview{background:#0F172A;border-radius:12px;padding:18px;overflow-x:auto;margin-bottom:18px}
+  .preview pre{font-family:var(--mono);font-size:12.5px;line-height:1.7;color:#E2E8F0;white-space:pre}
+  .preview .k{color:#7DD3FC} .preview .v{color:#FDE68A} .preview .c{color:#64748B} .preview .empty{color:#F87171}
+  .bar{position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.95);backdrop-filter:blur(8px);border-top:1px solid var(--line);padding:14px 20px}
+  .bar-in{max-width:760px;margin:0 auto;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .progress{flex:1;min-width:180px}
+  .ptext{font-size:13px;font-weight:600;margin-bottom:6px}
+  .ptext span{color:var(--muted);font-weight:500}
+  .track{height:6px;background:var(--line);border-radius:99px;overflow:hidden}
+  .fill{height:100%;background:var(--blue);border-radius:99px;width:0%;transition:width .3s}
+  .fill.full{background:var(--ok)}
+  .primary{background:var(--blue);color:#fff;font-size:14.5px;padding:12px 22px}
+  .primary:hover{background:var(--blue-dark)}
+  .primary:disabled{background:#CBD5E1;cursor:not-allowed}
+  .secondary{background:#fff;border:1.5px solid var(--line);color:#475569;font-size:14.5px;padding:12px 18px}
+  .secondary:hover{border-color:var(--blue);color:var(--blue)}
+  .steps{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin-bottom:18px}
+  .steps h2{font-size:16px;margin-bottom:12px}
+  .steps ol{padding-left:20px;font-size:14px;line-height:1.8;color:#334155}
+  .steps code{font-family:var(--mono);font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:1px 6px}
+  .toast{position:fixed;bottom:96px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;font-size:13.5px;padding:10px 18px;border-radius:9px;opacity:0;transition:.25s;pointer-events:none}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">VibePost · Этап 0 · подготовка</div>
+    <h1>Заполнение файла .env</h1>
+    <p class="lead">Вставь ключи в поля ниже — под каждым написано, где его взять. Внизу страницы соберётся готовый файл: скачай его и положи в папку проекта.</p>
+    <div class="privacy">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1E40AF" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      <div>Страница работает полностью локально в твоём браузере. Ключи и токены никуда не отправляются — можно даже отключить интернет.</div>
+    </div>
+  </header>
+
+  <section class="card" data-group>
+    <h2>Supabase <span class="badge" data-badge>0 / 5</span></h2>
+    <p class="sub">Всё берётся в панели supabase.com в твоём проекте.</p>
+
+    <div class="field">
+      <label for="url">Project URL</label>
+      <div class="hint">Supabase → твой проект → <b>Settings → API</b> → поле «Project URL». Выглядит как <b>https://abcdefgh.supabase.co</b></div>
+      <input id="url" data-key="SUPABASE_URL" placeholder="https://XXXX.supabase.co" autocomplete="off" spellcheck="false">
+      <div class="msg" id="msg-url"></div>
+    </div>
+
+    <div class="field">
+      <label for="ref">Project Ref</label>
+      <div class="hint">Заполнится <b>сам</b> из Project URL. Это короткий код проекта (часть адреса до .supabase.co).</div>
+      <input id="ref" data-key="SUPABASE_PROJECT_REF" placeholder="XXXX" autocomplete="off" spellcheck="false">
+      <div class="msg" id="msg-ref"></div>
+    </div>
+
+    <div class="field">
+      <label for="anon">Anon key (публичный ключ)</label>
+      <div class="hint"><b>Settings → API</b> → раздел «Project API keys» → ключ <b>anon / public</b>. Длинная строка, обычно начинается с <b>eyJ</b> или <b>sb_publishable_</b></div>
+      <div class="inrow"><input id="anon" data-key="SUPABASE_ANON_KEY" type="password" placeholder="eyJ..." autocomplete="off"><button class="eye" data-eye="anon" title="Показать">👁</button></div>
+      <div class="msg" id="msg-anon"></div>
+    </div>
+
+    <div class="field">
+      <label for="srole">Service role key (секретный ключ)</label>
+      <div class="hint"><b>Settings → API</b> → ключ <b>service_role</b> (нажми «Reveal», чтобы показать). Самый важный секрет — никому не пересылай.</div>
+      <div class="inrow"><input id="srole" data-key="SUPABASE_SERVICE_ROLE_KEY" type="password" placeholder="eyJ..." autocomplete="off"><button class="eye" data-eye="srole" title="Показать">👁</button></div>
+      <div class="msg" id="msg-srole"></div>
+    </div>
+
+    <div class="field">
+      <label for="dbpass">Пароль базы данных</label>
+      <div class="hint">Ты задавала его при <b>создании проекта</b>. Если забыла: <b>Settings → Database → Reset database password</b> (задай новый и вставь сюда).</div>
+      <div class="inrow"><input id="dbpass" data-key="SUPABASE_DB_PASSWORD" type="password" placeholder="пароль БД" autocomplete="off"><button class="eye" data-eye="dbpass" title="Показать">👁</button></div>
+      <div class="msg" id="msg-dbpass"></div>
+    </div>
+  </section>
+
+  <section class="card" data-group>
+    <h2>Telegram <span class="badge" data-badge>0 / 3</span></h2>
+    <p class="sub">Тестовый бот и канал — по чеклисту из docs/04_SETUP.md.</p>
+
+    <div class="field">
+      <label for="bottoken">Токен тестового бота</label>
+      <div class="hint">Бот <b>@BotFather</b> → команда /newbot (или /mybots → твой бот → API Token). Формат: <b>1234567890:AAaa...</b></div>
+      <div class="inrow"><input id="bottoken" data-key="TELEGRAM_TEST_BOT_TOKEN" type="password" placeholder="1234567890:AA..." autocomplete="off"><button class="eye" data-eye="bottoken" title="Показать">👁</button></div>
+      <div class="msg" id="msg-bottoken"></div>
+    </div>
+
+    <div class="field">
+      <label for="chatid">Chat ID тестового канала</label>
+      <div class="hint">Перешли любое сообщение из канала боту <b>@getidsbot</b> — он покажет ID канала. Начинается с <b>-100</b></div>
+      <input id="chatid" data-key="TELEGRAM_TEST_CHAT_ID" placeholder="-100XXXXXXXXXX" autocomplete="off" spellcheck="false">
+      <div class="msg" id="msg-chatid"></div>
+    </div>
+
+    <div class="field">
+      <label for="myid">Твой Telegram ID</label>
+      <div class="hint">Напиши боту <b>@userinfobot</b> — он ответит твоим ID (просто число). Сюда будут приходить уведомления об ошибках.</div>
+      <input id="myid" data-key="ERROR_NOTIFY_TG_ID" placeholder="123456789" autocomplete="off" spellcheck="false">
+      <div class="msg" id="msg-myid"></div>
+    </div>
+  </section>
+
+  <section class="card" data-group>
+    <h2>Защита вебхука <span class="badge" data-badge>0 / 1</span></h2>
+    <p class="sub">Случайная строка-пароль, которой защищается приём данных от Telegram. Придумывать не надо — нажми «Сгенерировать».</p>
+    <div class="field">
+      <label for="whsecret">Секрет вебхука</label>
+      <div class="inrow">
+        <input id="whsecret" data-key="TELEGRAM_WEBHOOK_SECRET" placeholder="нажми «Сгенерировать» →" autocomplete="off" spellcheck="false">
+        <button class="ghost" id="gen">Сгенерировать</button>
+      </div>
+      <div class="msg" id="msg-whsecret"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Предпросмотр файла</h2>
+    <p class="sub">Так будет выглядеть содержимое .env. Красным — что ещё не заполнено.</p>
+    <div class="preview"><pre id="preview"></pre></div>
+  </section>
+
+  <section class="steps">
+    <h2>Что делать со скачанным файлом</h2>
+    <ol>
+      <li>Нажми <b>«Скачать .env»</b> — файл попадёт в «Загрузки».</li>
+      <li>Перенеси его в папку проекта: <code>...\Отложенный постинг (рассылка) в ТГ</code> (рядом с CLAUDE.md).</li>
+      <li>Файл должен называться ровно <code>.env</code> — с точкой в начале, без .txt. Если Chrome сохранил иначе — переименуй.</li>
+      <li>Если переименовать не даёт — нажми «Скопировать», в папке создай файл через Блокнот и при сохранении укажи имя <code>".env"</code> в кавычках.</li>
+    </ol>
+  </section>
+</div>
+
+<div class="bar">
+  <div class="bar-in">
+    <div class="progress">
+      <div class="ptext"><span id="pcount">Заполнено 0 из 9</span></div>
+      <div class="track"><div class="fill" id="pfill"></div></div>
+    </div>
+    <button class="secondary" id="copy">Скопировать</button>
+    <button class="primary" id="dl" disabled>Скачать .env</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+  var ORDER = [
+    {c:'# Supabase (Settings → API)'},
+    {k:'SUPABASE_URL'},{k:'SUPABASE_PROJECT_REF'},{k:'SUPABASE_ANON_KEY'},
+    {k:'SUPABASE_SERVICE_ROLE_KEY'},{k:'SUPABASE_DB_PASSWORD'},
+    {c:''},{c:'# Telegram — тестовые данные'},
+    {k:'TELEGRAM_TEST_BOT_TOKEN'},{k:'TELEGRAM_TEST_CHAT_ID'},{k:'ERROR_NOTIFY_TG_ID'},
+    {c:''},{c:'# Секрет для защиты telegram-webhook'},
+    {k:'TELEGRAM_WEBHOOK_SECRET'}
+  ];
+  var inputs = Array.prototype.slice.call(document.querySelectorAll('input[data-key]'));
+  var toastT;
+
+  function toast(t){
+    var el = document.getElementById('toast');
+    el.textContent = t; el.classList.add('show');
+    clearTimeout(toastT); toastT = setTimeout(function(){el.classList.remove('show')},2600);
+  }
+
+  function setMsg(id, text, cls){
+    var m = document.getElementById('msg-'+id);
+    if(m){ m.textContent = text||''; m.className = 'msg'+(cls?' '+cls:''); }
+  }
+
+  function validate(inp){
+    var v = inp.value.trim(), id = inp.id;
+    inp.classList.remove('filled','warn');
+    if(!v){ setMsg(id,''); return false; }
+    var warn = '';
+    if(id==='url'){
+      if(!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(v)) warn='Обычно адрес выглядит как https://xxxx.supabase.co';
+      else { var ref=document.getElementById('ref'); if(!ref.value.trim()){ ref.value=v.replace(/^https:\/\//i,'').split('.')[0]; validate(ref); } }
+    }
+    if(id==='chatid' && !/^-100\d+$/.test(v)) warn='ID канала обычно начинается с -100 и дальше только цифры';
+    if(id==='myid' && !/^\d+$/.test(v)) warn='Обычно это просто число, без букв и @';
+    if(id==='bottoken' && !/^\d+:[\w-]{30,}$/.test(v)) warn='Токен обычно выглядит как цифры, двоеточие и длинный код';
+    if((id==='anon'||id==='srole') && !(v.indexOf('eyJ')===0 || v.indexOf('sb_')===0)) warn='Ключи Supabase обычно начинаются с eyJ или sb_';
+    if(warn){ inp.classList.add('warn'); setMsg(id,'⚠ '+warn+' — проверь, но если уверена, можно оставить','warn'); }
+    else { inp.classList.add('filled'); setMsg(id,'✓ Заполнено','ok'); }
+    return true;
+  }
+
+  function values(){
+    var o={};
+    inputs.forEach(function(i){ o[i.getAttribute('data-key')] = i.value.trim(); });
+    return o;
+  }
+
+  function buildEnv(){
+    var v = values();
+    return ORDER.map(function(r){
+      if('c' in r) return r.c;
+      return r.k + '=' + (v[r.k]||'');
+    }).join('\n') + '\n';
+  }
+
+  function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+  function mask(key, val){
+    if(!val) return '';
+    var secret = /KEY|TOKEN|PASSWORD|SECRET/.test(key) && key!=='SUPABASE_ANON_KEY' ? true : /TOKEN|PASSWORD|SECRET|SERVICE/.test(key);
+    if(/SERVICE_ROLE|TOKEN|PASSWORD|SECRET/.test(key) && val.length>8)
+      return val.slice(0,4)+'••••••••'+val.slice(-4);
+    if(val.length>46) return val.slice(0,42)+'…';
+    return val;
+  }
+
+  function refresh(){
+    var v = values(), filled = 0, total = inputs.length;
+    inputs.forEach(function(i){ if(i.value.trim()) filled++; });
+
+    // предпросмотр
+    var html = ORDER.map(function(r){
+      if('c' in r) return '<span class="c">'+esc(r.c)+'</span>';
+      var val = v[r.k];
+      return '<span class="k">'+r.k+'</span>=' + (val ? '<span class="v">'+esc(mask(r.k,val))+'</span>' : '<span class="empty">← не заполнено</span>');
+    }).join('\n');
+    document.getElementById('preview').innerHTML = html;
+
+    // прогресс
+    document.getElementById('pcount').textContent = filled===total ? 'Всё заполнено — можно скачивать' : 'Заполнено '+filled+' из '+total;
+    var f = document.getElementById('pfill');
+    f.style.width = (filled/total*100)+'%';
+    f.className = 'fill'+(filled===total?' full':'');
+    document.getElementById('dl').disabled = filled===0;
+
+    // бейджи групп
+    document.querySelectorAll('section[data-group]').forEach(function(g){
+      var ins = g.querySelectorAll('input[data-key]'), n=0;
+      ins.forEach(function(i){ if(i.value.trim()) n++; });
+      var b = g.querySelector('[data-badge]');
+      b.textContent = n+' / '+ins.length;
+      b.className = 'badge'+(n===ins.length?' done':'');
+    });
+  }
+
+  inputs.forEach(function(i){
+    i.addEventListener('input', function(){ validate(i); refresh(); });
+  });
+
+  document.querySelectorAll('[data-eye]').forEach(function(b){
+    b.addEventListener('click', function(){
+      var i = document.getElementById(b.getAttribute('data-eye'));
+      i.type = i.type==='password' ? 'text' : 'password';
+      b.textContent = i.type==='password' ? '👁' : '🙈';
+    });
+  });
+
+  document.getElementById('gen').addEventListener('click', function(){
+    var a = new Uint8Array(32); crypto.getRandomValues(a);
+    var s = Array.prototype.map.call(a, function(b){return ('0'+b.toString(16)).slice(-2)}).join('');
+    var i = document.getElementById('whsecret');
+    i.value = s; validate(i); refresh();
+    toast('Секрет сгенерирован');
+  });
+
+  document.getElementById('dl').addEventListener('click', function(){
+    var v = values(), missing = inputs.filter(function(i){return !i.value.trim()});
+    if(missing.length && !confirm('Не заполнено полей: '+missing.length+'. Скачать всё равно? (пустые значения можно будет дописать позже)')) return;
+    var blob = new Blob([buildEnv()], {type:'text/plain;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = '.env';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){URL.revokeObjectURL(a.href)},2000);
+    toast('Файл скачан — проверь папку «Загрузки»');
+  });
+
+  document.getElementById('copy').addEventListener('click', function(){
+    var t = buildEnv();
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(function(){toast('Содержимое скопировано в буфер')},function(){fallback()});
+    } else fallback();
+    function fallback(){
+      var ta = document.createElement('textarea');
+      ta.value = t; document.body.appendChild(ta); ta.select();
+      try{document.execCommand('copy'); toast('Содержимое скопировано в буфер')}catch(e){toast('Не удалось скопировать — выдели предпросмотр вручную')}
+      ta.remove();
+    }
+  });
+
+  refresh();
+})();
+</script>
+</body>
+</html>
