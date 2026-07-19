@@ -61,11 +61,33 @@ function callerIsService(req: Request, serviceKey: string): boolean {
 interface QueueItem {
   kind: "post" | "chain_step";
   id: string;
+  user_id: string;
   bot_id: string;
   chat_id: string; // uuid чата в нашей БД
   retry_count: number;
   content: PostContent;
   post_id?: string; // только у постов — для post_analytics
+}
+
+// Ошибка отправки → notify-error (запись в notifications + личный Telegram).
+// Сбой уведомления не должен ронять планировщик.
+async function notifyError(serviceKey: string, item: QueueItem, message: string) {
+  try {
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/notify-error`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${serviceKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        user_id: item.user_id,
+        type: item.kind === "post" ? "post_failed" : "chain_failed",
+        message,
+      }),
+    });
+  } catch (_e) {
+    // намеренно молчим
+  }
 }
 
 Deno.serve(async (req) => {
@@ -90,6 +112,7 @@ Deno.serve(async (req) => {
     ...(posts ?? []).map((p: Record<string, unknown>) => ({
       kind: "post" as const,
       id: p.id as string,
+      user_id: p.user_id as string,
       bot_id: p.bot_id as string,
       chat_id: p.chat_id as string,
       retry_count: (p.retry_count as number) ?? 0,
@@ -99,6 +122,7 @@ Deno.serve(async (req) => {
     ...(steps ?? []).map((s: Record<string, unknown>) => ({
       kind: "chain_step" as const,
       id: s.id as string,
+      user_id: s.user_id as string,
       bot_id: s.bot_id as string,
       chat_id: s.chat_id as string,
       retry_count: (s.retry_count as number) ?? 0,
@@ -137,9 +161,11 @@ Deno.serve(async (req) => {
       const tgChatId = tgChatById.get(item.chat_id);
 
       if (!token || !tgChatId) {
+        const msg = "Бот неактивен/удалён или чат не найден";
         await admin.from(table(item))
-          .update({ status: "failed", error: "Бот неактивен/удалён или чат не найден" })
+          .update({ status: "failed", error: msg })
           .eq("id", item.id);
+        await notifyError(serviceKey, item, msg);
         failed++;
         continue;
       }
@@ -186,6 +212,13 @@ Deno.serve(async (req) => {
           error: res.error,
           retry_count: item.retry_count + (res.retryable ? 1 : 0),
         }).eq("id", item.id);
+        const what = item.kind === "post" ? "Пост" : "Шаг цепочки";
+        const preview = (item.content.text ?? item.content.poll_question ?? "").slice(0, 80);
+        await notifyError(
+          serviceKey,
+          item,
+          `${what} не отправлен.\nПричина: ${res.error}${preview ? `\nТекст: «${preview}…»` : ""}`,
+        );
         failed++;
       }
 
