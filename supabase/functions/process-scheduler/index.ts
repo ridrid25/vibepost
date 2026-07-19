@@ -41,10 +41,27 @@ async function sendWithRetry(
   }
 }
 
+// Разрешаем запуск только с service-правами: либо JWT с ролью service_role
+// (подпись уже проверена шлюзом Supabase), либо точное совпадение с ключом
+// из окружения функции.
+function callerIsService(req: Request, serviceKey: string): boolean {
+  const auth = req.headers.get("Authorization") ?? "";
+  const m = auth.match(/^Bearer (.+)$/);
+  if (!m) return false;
+  if (m[1] === serviceKey) return true;
+  const parts = m[1].split(".");
+  if (parts.length !== 3) return false;
+  try {
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.role === "service_role";
+  } catch {
+    return false;
+  }
+}
+
 Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-  // Запускать может только планировщик (pg_cron) с service-ключом
-  if (req.headers.get("Authorization") !== `Bearer ${serviceKey}`) {
+  if (!callerIsService(req, serviceKey)) {
     return json(403, { error: "forbidden" });
   }
 
