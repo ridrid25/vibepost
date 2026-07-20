@@ -226,14 +226,33 @@ Deno.serve(async (req) => {
     }
   }
 
-  // 4. Завершённые цепочки → done
-  const { data: chainsDone } = await admin.rpc("finalize_done_chains");
+  // 4. Завершённые цепочки → done + «✅ цепочка завершена» владельцу
+  const { data: doneChains } = await admin.rpc("finalize_done_chains");
+  for (const dc of doneChains ?? []) {
+    try {
+      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/notify-error`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${serviceKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          user_id: dc.user_id,
+          type: "chain_done",
+          title: "✅ VibePost",
+          message: `Цепочка «${dc.chain_name}» завершена: отправлено ${dc.steps_sent} из ${dc.steps_total} шагов.`,
+        }),
+      });
+    } catch (_e) {
+      // уведомление не должно ронять планировщик
+    }
+  }
 
   return json(200, {
     claimed: items.length,
     sent,
     failed,
     rescheduled,
-    chains_done: chainsDone ?? 0,
+    chains_done: (doneChains ?? []).length,
   });
 });

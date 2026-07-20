@@ -33,19 +33,22 @@ Deno.serve(async (req) => {
   if (!callerIsService(req, serviceKey)) return json(403, { error: "forbidden" });
 
   const body = await req.json().catch(() => ({}));
-  const { user_id, type, message } = body;
+  const { user_id, type, message, title, skip_bell } = body;
   if (!user_id || !type || !message) {
     return json(400, { error: "Нужны user_id, type и message" });
   }
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
 
-  // 1. Всегда — запись в notifications
-  const { error: insertError } = await admin
-    .from("notifications")
-    .insert({ user_id, type, message });
-  if (insertError) {
-    return json(500, { error: `notifications: ${insertError.message}` });
+  // 1. Запись в notifications (колокольчик) — кроме служебных рассылок
+  //    вроде ежедневной сводки (skip_bell: true)
+  if (!skip_bell) {
+    const { error: insertError } = await admin
+      .from("notifications")
+      .insert({ user_id, type, message });
+    if (insertError) {
+      return json(500, { error: `notifications: ${insertError.message}` });
+    }
   }
 
   // 2. Личный Telegram — если настроен в профиле
@@ -75,7 +78,7 @@ Deno.serve(async (req) => {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               chat_id: profile.error_notify_tg_id,
-              text: `⚠️ VibePost — ошибка отправки\n\n${message}`,
+              text: `${typeof title === "string" && title ? title : "⚠️ VibePost — ошибка отправки"}\n\n${message}`,
             }),
           });
           const tg = await resp.json().catch(() => null);
