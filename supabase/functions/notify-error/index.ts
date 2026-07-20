@@ -28,15 +28,42 @@ function callerIsService(req: Request, serviceKey: string): boolean {
   }
 }
 
+// По тексту ошибки Telegram подсказываем пользователю, как починить самому
+function repairHint(type: string, message: string): string | null {
+  if (type !== "post_failed" && type !== "chain_failed") return null;
+  const m = message.toLowerCase();
+  if (m.includes("chat not found") || m.includes("chat_id is empty")) {
+    return "Канал не найден. В Настройках удалите этот чат и привяжите заново (проверьте Chat ID или @имя канала).";
+  }
+  if (
+    m.includes("not enough rights") || m.includes("have no rights") ||
+    m.includes("bot is not a member") || m.includes("kicked") ||
+    m.includes("chat_write_forbidden")
+  ) {
+    return "Бот потерял доступ к каналу. В Telegram добавьте бота администратором канала с правом «Публикация сообщений» — и запланируйте пост заново.";
+  }
+  if (m.includes("unauthorized") || m.includes("bot token")) {
+    return "Токен бота недействителен (похоже, отозван в BotFather). В Настройках добавьте бота заново с новым токеном.";
+  }
+  if (m.includes("бот неактивен")) {
+    return "Бот отключён или удалён из приложения. Зайдите в Настройки и добавьте его заново.";
+  }
+  return "Откройте пост в приложении — полный текст ошибки на его карточке. Если непонятно, что делать, — напишите разработчику.";
+}
+
 Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   if (!callerIsService(req, serviceKey)) return json(403, { error: "forbidden" });
 
   const body = await req.json().catch(() => ({}));
-  const { user_id, type, message, title, skip_bell } = body;
+  const { user_id, type, title, skip_bell } = body;
+  let { message } = body;
   if (!user_id || !type || !message) {
     return json(400, { error: "Нужны user_id, type и message" });
   }
+
+  const hint = repairHint(type, message);
+  if (hint) message = `${message}\n\n🔧 Что делать: ${hint}`;
 
   const admin = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
 
