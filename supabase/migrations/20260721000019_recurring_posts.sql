@@ -174,7 +174,7 @@ begin
       r.poll_question, r.poll_options, r.poll_anonymous, r.inline_buttons,
       r.is_silent, r.disable_link_preview, r.next_run_at, 'scheduled', r.id
     )
-    on conflict (source_recurring_id, scheduled_at) do nothing;
+    on conflict (source_recurring_id, scheduled_at) where source_recurring_id is not null do nothing;
 
     update public.recurring_posts
     set next_run_at = public.recurring_compute_next(
