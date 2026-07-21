@@ -4,9 +4,10 @@
 // добавляет инлайн-кнопки, тихую отправку и отключение превью ссылок.
 
 export interface PostContent {
-  format: string; // 'text' | 'photo' | 'poll'
+  format: string; // 'text' | 'photo' | 'poll' | 'video'
   text: string | null;
   photo_url: string | null;
+  video_url: string | null;
   poll_question: string | null;
   poll_options: unknown; // ["Вариант 1", ...]
   poll_anonymous: boolean;
@@ -49,6 +50,12 @@ export async function sendPost(
       method = "sendPhoto";
       payload.photo = post.photo_url;
       if (post.text) payload.caption = post.text;
+      break;
+    case "video":
+      method = "sendVideo";
+      payload.video = post.video_url;
+      if (post.text) payload.caption = post.text;
+      payload.supports_streaming = true;
       break;
     case "poll": {
       method = "sendPoll";
