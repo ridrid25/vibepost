@@ -79,9 +79,20 @@ async function handleCommand(
   if (!token) return;
 
   const uid = profile.id;
-  const cmd = msg.text.trim().split(/[\s@]/)[0].toLowerCase();
+  // Понимаем и команды (/status), и нажатия кнопок меню («📊 Статус»)
+  const raw = msg.text.trim().toLowerCase();
+  let cmd = raw.split(/[\s@]/)[0];
+  if (!cmd.startsWith("/")) {
+    if (raw.includes("статус")) cmd = "/status";
+    else if (raw.includes("очередь")) cmd = "/queue";
+    else if (raw.includes("сводка")) cmd = "/today";
+    else if (raw.includes("сломалось") || raw.includes("sos")) cmd = "/sos";
+    else cmd = "";
+  }
   const { todayStart, tomorrowStart, dayAfterStart } = mskDayBounds();
   let reply: string;
+  // Если задан — шлём вторым сообщением как блок кода (одно касание = копия)
+  let copyBlock: string | null = null;
 
   if (cmd === "/status") {
     const { data: stuck } = await admin.rpc("stuck_report", { p_minutes: 10 });
@@ -151,18 +162,65 @@ async function handleCommand(
       .eq("user_id", uid).eq("status", "running");
     reply = `📊 Сводка:\nОтправлено сегодня: ${s ?? 0}\nОшибок: ${f ?? 0}` +
       `\nЗапланировано на завтра: ${p ?? 0}\nЦепочек в работе: ${r ?? 0}`;
+  } else if (cmd === "/sos" || cmd === "/help") {
+    reply = "🛠 Ремонтная памятка VibePost\n\n" +
+      "1️⃣ Пришла ошибка отправки с причиной — почти всегда чинится за " +
+      "2 минуты: следуйте разделу «🔧 Что делать» прямо в уведомлении " +
+      "(перепривязать канал, вернуть бота в админы и т.п.).\n\n" +
+      "2️⃣ Пришло 🚨 «постинг встал» — нужен разработчик: откройте " +
+      "Claude Code на компьютере в папке проекта и напишите «сторож " +
+      "ругается, постинг встал».\n\n" +
+      "3️⃣ Вы не у компьютера — откройте приложение Claude на телефоне, " +
+      "пришлите ему скриншот ошибки и текст из блока ниже.\n" +
+      "👇 Нажмите на серый блок — он скопируется одним касанием.\n\n" +
+      "ℹ️ Если бот и приложение молчат несколько дней — возможно, уснул " +
+      "бесплатный Supabase: зайдите на supabase.com → проект VibePost → " +
+      "кнопка Restore.";
+    copyBlock =
+      "У меня сервис VibePost: отложенный постинг в Telegram на Supabase, " +
+      "проект rjtyjybwygfkdekdzqbm (облако supabase.com). Посты шлёт " +
+      "Edge Function process-scheduler по pg_cron раз в минуту. Проверь " +
+      "через коннектор Supabase журналы и зависшие посты и скажи, что " +
+      "сломалось и как чинить.";
   } else {
     reply = "Я слежу за вашим постингом. Команды:\n" +
       "/status — всё ли работает\n" +
       "/queue — ближайшие публикации\n" +
-      "/today — сводка за день";
+      "/today — сводка за день\n" +
+      "/sos — что делать, если сломалось";
   }
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: msg.chat.id, text: reply }),
+    body: JSON.stringify({
+      chat_id: msg.chat.id,
+      text: reply,
+      // Постоянное меню-клавиатура под полем ввода
+      reply_markup: {
+        keyboard: [
+          [{ text: "📊 Статус" }, { text: "📅 Очередь" }],
+          [{ text: "🗒 Сводка за день" }, { text: "🛠 Если сломалось" }],
+        ],
+        resize_keyboard: true,
+        is_persistent: true,
+      },
+    }),
   }).catch(() => {});
+
+  // Второе сообщение — блок кода. На телефоне у него есть кнопка «копировать»
+  // (одно касание переносит весь текст в буфер обмена).
+  if (copyBlock) {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: `<pre>${copyBlock}</pre>`,
+        parse_mode: "HTML",
+      }),
+    }).catch(() => {});
+  }
 }
 
 Deno.serve(async (req) => {
@@ -221,7 +279,7 @@ Deno.serve(async (req) => {
       update.message &&
       update.message.chat?.type === "private" &&
       typeof update.message.text === "string" &&
-      update.message.text.startsWith("/")
+      update.message.text.trim().length > 0
     ) {
       await handleCommand(admin, update.message);
     }
