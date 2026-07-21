@@ -8,6 +8,7 @@ export interface PostContent {
   text: string | null;
   photo_url: string | null;
   video_url: string | null;
+  video_autoplay: boolean; // true → sendAnimation (крутится без звука)
   poll_question: string | null;
   poll_options: unknown; // ["Вариант 1", ...]
   poll_anonymous: boolean;
@@ -52,10 +53,16 @@ export async function sendPost(
       if (post.text) payload.caption = post.text;
       break;
     case "video":
-      method = "sendVideo";
-      payload.video = post.video_url;
+      if (post.video_autoplay === true) {
+        // Как «анимация»/GIF: Telegram крутит по кругу, без звука, без play
+        method = "sendAnimation";
+        payload.animation = post.video_url;
+      } else {
+        method = "sendVideo";
+        payload.video = post.video_url;
+        payload.supports_streaming = true;
+      }
       if (post.text) payload.caption = post.text;
-      payload.supports_streaming = true;
       break;
     case "poll": {
       method = "sendPoll";
