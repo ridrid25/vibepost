@@ -106,6 +106,15 @@ Deno.serve(async (req) => {
             body: JSON.stringify({
               chat_id: profile.error_notify_tg_id,
               text: `${typeof title === "string" && title ? title : "⚠️ VibePost — ошибка отправки"}\n\n${message}`,
+              // То же постоянное меню, что и у команд бота
+              reply_markup: {
+                keyboard: [
+                  [{ text: "📊 Статус" }, { text: "📅 Очередь" }],
+                  [{ text: "🗒 Сводка за день" }, { text: "🛠 Если сломалось" }],
+                ],
+                resize_keyboard: true,
+                is_persistent: true,
+              },
             }),
           });
           const tg = await resp.json().catch(() => null);

@@ -30,11 +30,11 @@ const { body: bots } = await rest('bots?select=id&limit=1');
 const botId = bots[0].id;
 
 // 1. Настройки уведомлений в профиле (как это сделает страница «Настройки»)
-const { status: profStatus } = await rest('profiles', {
+const { status: profStatus, body: profBody } = await rest(`profiles?id=eq.${login.user.id}`, {
   method: 'PATCH',
   body: JSON.stringify({ error_notify_tg_id: notifyTgId, error_notify_bot_id: botId }),
 });
-if (profStatus >= 300) { console.error('Не удалось обновить профиль'); process.exit(1); }
+if (profStatus >= 300) { console.error('Не удалось обновить профиль:', JSON.stringify(profBody)); process.exit(1); }
 console.log('Профиль: уведомления настроены (Telegram ID + бот)');
 
 // 2. «Сломанный» чат с несуществующим Chat ID

@@ -117,6 +117,13 @@ async function handleCommand(
       : "✅ Всё работает, зависших публикаций нет.";
     reply += `\nСегодня: отправлено ${sentToday ?? 0}, ошибок ${failedToday ?? 0}.`;
     reply += `\nВ очереди: ${queued ?? 0} пост(ов).`;
+    // Деньги на генерацию: считаем сами, у служебного аккаунта нет доступа
+    // к балансу биллинга Google.
+    const { data: деньги } = await admin.rpc("veo_spend", { p_user: uid });
+    const м = деньги?.[0];
+    if (м) {
+      reply += `\nГенерация: потрачено ${Number(м.за_месяц_usd).toFixed(2)} $ из ${Number(м.лимит_usd).toFixed(2)} $, осталось ${Number(м.осталось_usd).toFixed(2)} $ (~${Math.round(Number(м.осталось_usd) * 90)} ₽), роликов за месяц: ${м.роликов_за_месяц}.`;
+    }
     if (next && next.length > 0) {
       reply += ` Ближайший — ${fmtMsk(next[0].scheduled_at)} МСК.`;
     }
@@ -278,10 +285,61 @@ Deno.serve(async (req) => {
     } else if (
       update.message &&
       update.message.chat?.type === "private" &&
+      (update.message.video || update.message.document)
+    ) {
+      // Ролик, присланный боту с телефона: «Поделиться» → бот. Приёмом
+      // занимается отдельная функция.
+      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/video-from-bot`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(update.message),
+      });
+    } else if (
+      update.message &&
+      update.message.chat?.type === "private" &&
+      update.message.reply_to_message &&
+      typeof update.message.text === "string" &&
+      update.message.text.trim().length > 0
+    ) {
+      // Ответ на карточку идеи своим текстом = правка реплики.
+      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/idea-button`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: "edit",
+          data: "idea:edit",
+          from: update.message.from,
+          new_line: update.message.text,
+          message: {
+            chat: update.message.chat,
+            message_id: update.message.reply_to_message.message_id,
+          },
+        }),
+      });
+    } else if (
+      update.message &&
+      update.message.chat?.type === "private" &&
       typeof update.message.text === "string" &&
       update.message.text.trim().length > 0
     ) {
       await handleCommand(admin, update.message);
+    } else if (update.callback_query) {
+      // Нажатия кнопок под карточками идей обрабатывает отдельная функция —
+      // её можно править, не трогая вебхук.
+      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/idea-button`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(update.callback_query),
+      });
     }
   } catch (_e) {
     // Ошибку глотаем сознательно: Telegram при не-200 повторяет доставку,

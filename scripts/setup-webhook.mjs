@@ -37,14 +37,36 @@ const tgRes = await fetch(`https://api.telegram.org/bot${botToken}/setWebhook`, 
   body: JSON.stringify({
     url: hookUrl,
     secret_token: secret,
-    allowed_updates: ['message', 'message_reaction', 'message_reaction_count'],
+    // callback_query нужен для кнопок под карточками идей — без него
+    // нажатия просто не доходят до нас.
+    allowed_updates: [
+      'message',
+      'message_reaction',
+      'message_reaction_count',
+      'callback_query',
+    ],
   }),
 });
 const tg = await tgRes.json();
 if (!tg.ok) { console.error('setWebhook:', tg.description); process.exit(1); }
 console.log('setWebhook: OK');
 
-// 3. Контроль
+// 3. Меню команд бота (кнопка «Меню» в чате)
+const cmdRes = await fetch(`https://api.telegram.org/bot${botToken}/setMyCommands`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    commands: [
+      { command: 'status', description: 'Всё ли работает' },
+      { command: 'queue', description: 'Ближайшие публикации' },
+      { command: 'today', description: 'Сводка за день' },
+      { command: 'sos', description: 'Что делать, если сломалось' },
+    ],
+  }),
+});
+console.log(`Меню команд: ${(await cmdRes.json()).ok ? 'OK' : 'ошибка'}`);
+
+// 4. Контроль
 const info = await (await fetch(`https://api.telegram.org/bot${botToken}/getWebhookInfo`)).json();
 console.log(`Вебхук: ${info.result?.url === hookUrl ? 'зарегистрирован правильно' : 'АДРЕС НЕ СОВПАДАЕТ'}`);
 console.log(`Ожидающих обновлений: ${info.result?.pending_update_count ?? 0}`);
