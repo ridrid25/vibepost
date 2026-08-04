@@ -145,6 +145,46 @@ async function handleCommand(
     }).catch(() => {});
     return;
   }
+  // Ответ на вопрос «как назвать ролик?». Кнопку «Задание» при этом никто не
+  // жмёт — Татьяна просто пишет строку следом за роликом. Ловим только тогда,
+  // когда свежий ролик действительно лежит без названия: ролик, присланный
+  // файлом, зовётся «duration_seconds_aspect (11).mp4», и заголовок в кадр из
+  // такого имени не поставить. Обработка этого ролика ждёт ответа.
+  if (!cmd) {
+    const давность = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: безымянный } = await admin
+      .from("incoming_videos")
+      .select("id, name")
+      .eq("user_id", profile.id)
+      .is("polished_at", null)
+      .gte("created_at", давность)
+      .order("created_at", { ascending: false })
+      .limit(1).maybeSingle();
+
+    const безЗаголовка = безымянный && !/—/.test(безымянный.name ?? "") &&
+      (/\.(mp4|mov|webm|mkv|avi)$/i.test(безымянный.name ?? "") ||
+        !/[а-яё]/i.test(безымянный.name ?? ""));
+
+    if (безЗаголовка) {
+      const название = msg.text.trim().split("\n")[0].slice(0, 200);
+      await admin.from("incoming_videos")
+        .update({ name: название }).eq("id", безымянный!.id);
+      const заголовок = название.includes("—")
+        ? название.split("—").pop()!.trim()
+        : название;
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: msg.chat.id,
+          text: `Назвал ролик «${название}». Заголовок в кадре: «${заголовок.toUpperCase()}». ` +
+            `Вешаю титры.`,
+        }),
+      }).catch(() => {});
+      return;
+    }
+  }
+
   const { todayStart, tomorrowStart, dayAfterStart } = mskDayBounds();
   let reply: string;
   // Если задан — шлём вторым сообщением как блок кода (одно касание = копия)
