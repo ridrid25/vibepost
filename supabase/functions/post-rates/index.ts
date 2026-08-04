@@ -56,8 +56,10 @@ async function buildText(cfg: {
       let arrow = "";
       if (cfg.show_change !== false && v.Previous) {
         const prev = v.Previous / (v.Nominal || 1);
-        if (val > prev) arrow = ` 🔺 +${ru(val - prev)}`;
-        else if (val < prev) arrow = ` 🔻 −${ru(prev - val)}`;
+        // 🔺 и 🔻 — оба красные, поэтому рост выглядел как падение.
+        // Зелёный кружок для роста, красный для падения: цвет читается сразу.
+        if (val > prev) arrow = ` 🟢 +${ru(val - prev)}`;
+        else if (val < prev) arrow = ` 🔴 −${ru(prev - val)}`;
       }
       lines.push(`${FIAT_LABEL[code] ?? code}: ${ru(val)} ₽${arrow}`);
     }

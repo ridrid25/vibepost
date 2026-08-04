@@ -63,7 +63,7 @@ async function handleCommand(
   // Владелец = тот, чей Telegram ID записан в настройках уведомлений
   const { data: profile } = await admin
     .from("profiles")
-    .select("id, error_notify_bot_id")
+    .select("id, error_notify_bot_id, awaiting_task")
     .eq("error_notify_tg_id", fromId)
     .maybeSingle();
   if (!profile?.error_notify_bot_id) return; // незнакомцам не отвечаем
@@ -87,7 +87,63 @@ async function handleCommand(
     else if (raw.includes("очередь")) cmd = "/queue";
     else if (raw.includes("сводка")) cmd = "/today";
     else if (raw.includes("сломалось") || raw.includes("sos")) cmd = "/sos";
+    else if (raw.includes("идеи")) cmd = "/ideas";
+    else if (raw.includes("дайджест")) cmd = "/digest";
+    else if (raw.includes("входящие")) cmd = "/inbox";
+    else if (raw.includes("задание")) cmd = "/task";
     else cmd = "";
+  }
+
+  // Режим «жду текст задания»: следующее сообщение — не команда, а задание
+  // для Claude. Проверяется до разбора команд, иначе съест их как текст.
+  if (!cmd && profile.awaiting_task) {
+    const текст = msg.text.trim();
+
+    // Татьяна присылает ролик, а название и замечание пишет следующим
+    // сообщением — подпись к самому видео она не набирает. Раньше эти два
+    // сообщения жили порознь: ролик оставался «Ролик из Telegram», а задание
+    // «Переделываем» повисало без адресата. Теперь свежий ролик (последние
+    // 20 минут) подхватывается: текст становится и названием, и замечанием.
+    const давность = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const { data: свежий } = await admin
+      .from("incoming_videos")
+      .select("id, name, status")
+      .eq("user_id", profile.id)
+      .gte("created_at", давность)
+      .in("status", ["new", "rework"])
+      .order("created_at", { ascending: false })
+      .limit(1).maybeSingle();
+
+    let хвост = "";
+    if (свежий) {
+      // Название — первая строка, без хвоста в полкилобайта.
+      const название = текст.split("\n")[0].trim().slice(0, 60);
+      const безымянный = !свежий.name || свежий.name === "Ролик из Telegram";
+      await admin.from("incoming_videos").update({
+        ...(безымянный && название ? { name: название } : {}),
+        status: "rework",
+        rework_note: текст,
+        rework_at: new Date().toISOString(),
+      }).eq("id", свежий.id);
+      хвост = безымянный && название
+        ? `\n\nОтнёс к ролику, который вы прислали только что, и назвал его «${название}».`
+        : `\n\nОтнёс к ролику «${свежий.name}» — он ушёл на доделку.`;
+    }
+
+    await admin.from("claude_tasks").insert({
+      user_id: profile.id, text: текст, video_id: свежий?.id ?? null,
+    });
+    await admin.from("profiles").update({ awaiting_task: false }).eq("id", profile.id);
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: "Записал. Возьму в работу, как только буду запущен на компьютере — " +
+          "список заданий проверяю первым делом." + хвост,
+      }),
+    }).catch(() => {});
+    return;
   }
   const { todayStart, tomorrowStart, dayAfterStart } = mskDayBounds();
   let reply: string;
@@ -169,6 +225,61 @@ async function handleCommand(
       .eq("user_id", uid).eq("status", "running");
     reply = `📊 Сводка:\nОтправлено сегодня: ${s ?? 0}\nОшибок: ${f ?? 0}` +
       `\nЗапланировано на завтра: ${p ?? 0}\nЦепочек в работе: ${r ?? 0}`;
+  } else if (cmd === "/inbox") {
+    const { data: v } = await admin
+      .from("incoming_videos")
+      .select("name, status, ready")
+      .eq("user_id", uid).eq("status", "new")
+      .order("created_at", { ascending: false }).limit(10);
+    reply = v?.length
+      ? `📥 Во «Входящих» ${v.length}:\n` +
+        v.map((x) => `• ${x.name}${x.ready ? "" : " — не согласован"}`).join("\n")
+      : "📥 Входящие пусты.";
+  } else if (cmd === "/ideas") {
+    // Идеи придумываются не мгновенно — предупреждаем, чтобы не ждали молча.
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: msg.chat.id, text: "Придумываю пять идей…" }),
+    }).catch(() => {});
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/suggest-ideas`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/digest") {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: msg.chat.id, text: "Собираю дайджест…" }),
+    }).catch(() => {});
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/write-digest`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/task") {
+    await admin.from("profiles").update({ awaiting_task: true }).eq("id", uid);
+    const { data: ждут } = await admin
+      .from("claude_tasks").select("text")
+      .eq("user_id", uid).eq("status", "new")
+      .order("created_at").limit(5);
+    reply = "✍️ Напишите задание следующим сообщением.\n\n" +
+      "Claude живёт на компьютере и сам в Telegram не отвечает. Задание " +
+      "полежит здесь и попадёт к нему при первом же запуске — ничего не " +
+      "потеряется и держать в голове не нужно.\n\nОтменить: любая кнопка меню." +
+      (ждут?.length
+        ? `\n\nУже ждут (${ждут.length}):\n` +
+          ждут.map((t) => `• ${t.text.slice(0, 70)}`).join("\n")
+        : "");
   } else if (cmd === "/sos" || cmd === "/help") {
     reply = "🛠 Ремонтная памятка VibePost\n\n" +
       "1️⃣ Пришла ошибка отправки с причиной — почти всегда чинится за " +
@@ -206,8 +317,9 @@ async function handleCommand(
       // Постоянное меню-клавиатура под полем ввода
       reply_markup: {
         keyboard: [
-          [{ text: "📊 Статус" }, { text: "📅 Очередь" }],
-          [{ text: "🗒 Сводка за день" }, { text: "🛠 Если сломалось" }],
+          [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
+          [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
+          [{ text: "✍️ Задание" }, { text: "🛠 Если сломалось" }],
         ],
         resize_keyboard: true,
         is_persistent: true,
@@ -330,16 +442,22 @@ Deno.serve(async (req) => {
     ) {
       await handleCommand(admin, update.message);
     } else if (update.callback_query) {
-      // Нажатия кнопок под карточками идей обрабатывает отдельная функция —
-      // её можно править, не трогая вебхук.
-      await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/idea-button`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
-          "Content-Type": "application/json",
+      // Нажатия кнопок обрабатывают отдельные функции — их можно править,
+      // не трогая вебхук. Дайджест новостей помечен префиксом «dg:».
+      const дайджест = String(update.callback_query.data ?? "").startsWith("dg:");
+      await fetch(
+        `${Deno.env.get("SUPABASE_URL")}/functions/v1/${дайджест ? "digest-button" : "idea-button"}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(
+            дайджест ? { callback: update.callback_query } : update.callback_query,
+          ),
         },
-        body: JSON.stringify(update.callback_query),
-      });
+      );
     }
   } catch (_e) {
     // Ошибку глотаем сознательно: Telegram при не-200 повторяет доставку,

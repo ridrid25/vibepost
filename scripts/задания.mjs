@@ -43,8 +43,9 @@ const [команда, ...аргументы] = process.argv.slice(2);
 
 if (команда === 'список') {
   const t = await (await fetch(
-    `${url}/rest/v1/claude_tasks?status=eq.new&select=id,text,created_at&order=created_at`,
-    { headers: h })).json();
+    `${url}/rest/v1/claude_tasks?status=eq.new` +
+    `&select=id,text,created_at,video_id,incoming_videos(name,measure_avg,measure_worst,video_url)` +
+    `&order=created_at`, { headers: h })).json();
   // Ролики, возвращённые кнопкой «↩︎ На доделку», — такое же задание, только
   // пришло из приложения, а не из бота. Разбираются в том же проходе.
   const r = await (await fetch(
@@ -56,6 +57,14 @@ if (команда === 'список') {
   } else {
     for (const z of t) {
       console.log(['ЗАДАНИЕ', z.id, z.created_at.slice(5, 16).replace('T', ' '), z.text].join('	'));
+      // Задание почти всегда про ролик, присланный минуту назад. Без этой
+      // строчки «Переделываем» читается как задание ни о чём — так и вышло
+      // 4 августа со скатом.
+      const в = z.incoming_videos;
+      if (в) {
+        console.log(['        ↳ ролик', z.video_id, в.name,
+          `замер ${в.measure_avg ?? '—'}/${в.measure_worst ?? '—'}`, в.video_url].join('	'));
+      }
     }
     for (const v of r) {
       console.log(['ДОДЕЛКА', v.id, v.name, v.rework_note ?? 'без пояснения'].join('	'));
@@ -92,8 +101,15 @@ if (команда === 'список') {
   const компакт = JSON.stringify(JSON.parse(readFileSync(файл, 'utf8')));
   const экран = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const шапка = подпись.join(' ').trim() || 'Промпт. Новый чат в Gemini, вставить одним куском:';
-  if (компакт.length > 3900) throw new Error(`промпт ${компакт.length} знаков — не влезет в сообщение`);
-  await бот(`${экран(шапка)}\n\n<pre>${экран(компакт)}</pre>`, 'HTML');
+  // Считаем длину готового сообщения, а не одного промпта: предел Telegram —
+  // 4096 знаков на всё вместе с шапкой. Глухое число здесь заставляло резать
+  // текст промпта вслепую, хотя место ещё оставалось.
+  const сообщение = `${экран(шапка)}\n\n<pre>${экран(компакт)}</pre>`;
+  if (сообщение.length > 4096) {
+    throw new Error(`сообщение ${сообщение.length} знаков — предел 4096. ` +
+      `Промпт ${компакт.length}, шапка ${шапка.length}: короче шапку или промпт.`);
+  }
+  await бот(сообщение, 'HTML');
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
   console.log('команды: список | готово <id> | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
