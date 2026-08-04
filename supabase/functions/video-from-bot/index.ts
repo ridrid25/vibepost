@@ -99,21 +99,20 @@ const СХЕМА_РАЗБОРА = {
         "по-русски: что в кадре, есть ли речь и понятна ли она, что смущает",
     },
     ok: { type: "BOOLEAN", description: "годится ли ролик в канал без переделки" },
-    captions: {
-      type: "ARRAY",
-      description: "пять разных вариантов подписи к посту по-русски, до 120 знаков каждый",
-      items: { type: "STRING" },
+    speech: {
+      type: "STRING",
+      description: "реплика героя дословно, как слышно, со знаками препинания",
     },
   },
-  required: ["review", "ok", "captions"],
+  required: ["review", "ok", "speech"],
 };
 
-/** Показывает ролик Gemini и просит разбор плюс пять подписей. */
+/** Показывает ролик Gemini и просит разбор и дословную реплику. */
 async function разобрать(
   admin: SupabaseClient,
   bytes: Uint8Array,
   задумка: string,
-): Promise<{ review: string; ok: boolean; captions: string[] }> {
+): Promise<{ review: string; ok: boolean; speech: string }> {
   const { token, project } = await googleToken(admin);
   const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
     `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
@@ -137,9 +136,9 @@ async function разобрать(
               `Посмотри ролик и дай короткий честный разбор: что в кадре, звучит ли ` +
               `речь и разборчива ли она, вертикальный ли кадр, попал ли в задумку, ` +
               `что смущает. Хвалить не надо, отмечай только существенное.\n\n` +
-              `Затем предложи пять РАЗНЫХ подписей к посту: короткие, злые, без морали ` +
-              `и без пояснения шутки. Разные по приёму — вопрос, констатация, ` +
-              `цифра, реплика героя, обращение к читателю.`,
+              `Отдельной строкой напиши РЕПЛИКУ дословно, как её слышно, ` +
+              `со знаками препинания — по ней Татьяна проверяет, не проглотил ли ` +
+              `герой окончание.`,
           },
         ],
       }],
@@ -228,14 +227,14 @@ Deno.serve(async (req) => {
     if (upErr) throw new Error(upErr.message);
     const videoUrl = admin.storage.from("post-photos").getPublicUrl(key).data.publicUrl;
 
-    let разбор: { review: string; ok: boolean; captions: string[] };
+    let разбор: { review: string; ok: boolean; speech: string };
     try {
       разбор = await разобрать(admin, bytes, задумка);
     } catch (e) {
       разбор = {
         review: `Разобрать ролик не вышло: ${e instanceof Error ? e.message : String(e)}`,
         ok: true,
-        captions: [],
+        speech: "",
       };
     }
 
@@ -246,12 +245,15 @@ Deno.serve(async (req) => {
       video_url: videoUrl,
       status: "new",
       review: разбор.review,
-      caption_options: разбор.captions,
+      caption_options: [],
       ready: false,
     }).select("id").single();
 
     // Разбор отдельным сообщением: формат проверяем по данным Telegram
+    // Реплику выносим отдельной строкой: по ней сразу видно, проглотил ли
+    // герой окончание — из-за этого переделывали скорпиона четыре раза.
     let текст = `<b>Разбор ролика</b>\n\n${разбор.review}`;
+    if (разбор.speech) текст += `\n\n<b>Слышно так:</b> «${разбор.speech}»`;
     if (video.width && video.height && video.width > video.height) {
       текст += `\n\n⚠️ Кадр горизонтальный. В приложении Gemini формат <b>9:16</b> — ` +
         `отдельная настройка, словами в промте она не задаётся.`;
@@ -277,30 +279,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (разбор.captions.length) {
-      await tg("sendMessage", {
-        chat_id: msg.chat.id,
-        text: "<b>Выберите подпись к посту</b>\n\n" +
-          разбор.captions.map((c, i) => `${i + 1}. ${c}`).join("\n\n") +
-          "\n\nНе нравится ни одна — нажмите «🔄 Другие пять» или просто " +
-          "ответьте на это сообщение своим текстом.",
-        parse_mode: "HTML",
-        reply_markup: {
-          inline_keyboard: [
-            разбор.captions.slice(0, 3).map((_, i) => ({
-              text: String(i + 1), callback_data: `cap:pick:${row!.id}:${i}`,
-            })),
-            разбор.captions.slice(3).map((_, i) => ({
-              text: String(i + 4), callback_data: `cap:pick:${row!.id}:${i + 3}`,
-            })),
-            [{ text: "🔄 Другие пять", callback_data: `cap:more:${row!.id}` }],
-          ],
-        },
-      });
-    } else {
-      await ответить("Ролик во «Входящих». Подпись напишите сами — " +
-        "ответьте на это сообщение своим текстом.");
-    }
+    // Пять вариантов подписи к посту отсюда убраны. Подписи под видео мы не
+    // ставим вовсе, а в ленте бота они читались как «опять предлагает
+    // названия» и мешали единственному вопросу: годится ролик или нет.
   } catch (e) {
     await ответить(`Не получилось принять ролик: ${e instanceof Error ? e.message : String(e)}`);
   }
