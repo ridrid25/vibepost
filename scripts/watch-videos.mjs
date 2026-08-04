@@ -31,7 +31,7 @@ import {
 import { join, extname, basename, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 const POLL_MS = 5000;
@@ -594,6 +594,50 @@ async function подтвердитьДоделки() {
 /** Ролики, о которых уже написано «жду название» — чтобы не повторяться. */
 const ждутНазвания = new Set();
 
+/**
+ * Будит Claude, когда Татьяна прислала задание.
+ *
+ * Раньше её ждал дежурный раз в час: написала в 16:25 — разбор в 17:05.
+ * Приёмник и так смотрит в базу каждые пять секунд, так что будить может он.
+ *
+ * Минута отсрочки: если Claude сейчас работает, он увидит задание сам —
+ * через хук завершения. Поднимать второго ни к чему.
+ */
+const ОТСРОЧКА_МС = 60 * 1000;
+const замокДежурного = join(base, 'dezhurny.lock');
+
+async function разбудитьЕслиЖдут() {
+  if (!url || !serviceKey) return;
+  let ждут;
+  try {
+    ждут = await (await fetch(
+      `${url}/rest/v1/claude_tasks?status=eq.new&select=id,created_at&order=created_at&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+    )).json();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(ждут) || !ждут.length) return;
+  if (Date.now() - new Date(ждут[0].created_at).getTime() < ОТСРОЧКА_МС) return;
+
+  // Дежурный уже поднят — второго не надо.
+  if (existsSync(замокДежурного)) {
+    try {
+      process.kill(Number(readFileSync(замокДежурного, 'utf8')), 0);
+      return;
+    } catch { /* процесс из замка умер — можно поднимать заново */ }
+  }
+
+  const дежурный = fileURLToPath(new URL('scripts/dezhurny.mjs', root));
+  const дитя = spawn('cmd.exe', ['/c', 'node', дежурный], {
+    detached: true, stdio: 'ignore', windowsHide: true,
+  });
+  writeFileSync(замокДежурного, String(дитя.pid));
+  дитя.on('exit', () => rmSync(замокДежурного, { force: true }));
+  дитя.unref();
+  console.log('[будильник] пришло задание — поднимаю Claude');
+}
+
 async function присланныеБоту() {
   if (!url || !serviceKey) return;
   const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
@@ -718,6 +762,7 @@ async function tick() {
     // Первым делом: подтверждение доделок не должно ждать обработки роликов.
     // Обработка занимает минуты, а Татьяне важно услышать «принял» сразу.
     await подтвердитьДоделки();
+    await разбудитьЕслиЖдут();
     await просмотр(readyDir, false);
     await просмотр(dubDir, true);
     await просмотр(noSubsDir, false);

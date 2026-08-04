@@ -11,6 +11,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"scripts/стоп-хук.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
     ]
   }
 }
