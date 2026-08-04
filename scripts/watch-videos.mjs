@@ -495,6 +495,48 @@ async function просмотр(dir, переозвучить) {
  * на сервере нет ffmpeg, титры там вжечь нечем. Поэтому забираем их сюда,
  * обрабатываем и кладём обратно — уже с титрами и петлёй.
  */
+/**
+ * Подтверждение доделок.
+ *
+ * Нажатую в приложении кнопку «На доделку» раньше не видел никто: приёмник
+ * берёт только необработанные ролики (`polished_at is null`), а у готового
+ * ролика эта пометка уже стоит. Замечание ложилось в базу, и Татьяне никто
+ * не отвечал — со стороны выглядело как «написала, а он ничего не делает».
+ *
+ * Теперь бот подтверждает каждое замечание сразу, как только оно появилось,
+ * и помечает подтверждённое, чтобы не написать дважды.
+ */
+async function подтвердитьДоделки() {
+  if (!url || !serviceKey) return;
+  const h = {
+    apikey: serviceKey, Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+  let новые;
+  try {
+    новые = await (await fetch(
+      `${url}/rest/v1/incoming_videos?status=eq.rework&rework_ack_at=is.null` +
+      `&select=id,name,rework_note&order=rework_at&limit=5`, { headers: h },
+    )).json();
+  } catch {
+    return;                         // сеть моргнула — попробуем на следующем тике
+  }
+  if (!Array.isArray(новые) || !новые.length) return;
+
+  for (const в of новые) {
+    await вБота(
+      `↩︎ Принял замечание по ролику «${в.name}»:\n\n` +
+      `«${в.rework_note ?? 'без пояснения'}»\n\n` +
+      'Беру в работу. Пришлю новый промт.',
+    );
+    await fetch(`${url}/rest/v1/incoming_videos?id=eq.${в.id}`, {
+      method: 'PATCH', headers: h,
+      body: JSON.stringify({ rework_ack_at: new Date().toISOString() }),
+    }).catch(() => {});
+    console.log(`[доделка] подтвердил: ${в.name}`);
+  }
+}
+
 async function присланныеБоту() {
   if (!url || !serviceKey) return;
   const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
@@ -581,6 +623,9 @@ async function tick() {
   if (занят) return;
   занят = true;
   try {
+    // Первым делом: подтверждение доделок не должно ждать обработки роликов.
+    // Обработка занимает минуты, а Татьяне важно услышать «принял» сразу.
+    await подтвердитьДоделки();
     await просмотр(readyDir, false);
     await просмотр(dubDir, true);
     await просмотр(noSubsDir, false);

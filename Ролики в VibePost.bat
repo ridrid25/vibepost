@@ -1,8 +1,8 @@
 @echo off
 chcp 65001 >nul
-title Ролики в VibePost — папка-приёмник
+title VibePost - priemnik rolikov
 cd /d "%~dp0"
 node scripts\watch-videos.mjs
 echo.
-echo Программа остановлена. Нажмите любую клавишу, чтобы закрыть окно.
+echo Programma ostanovlena. Nazhmite lyubuyu klavishu.
 pause >nul
