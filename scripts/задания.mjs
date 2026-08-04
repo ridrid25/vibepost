@@ -41,6 +41,19 @@ async function бот(текст, разметка) {
 
 const [команда, ...аргументы] = process.argv.slice(2);
 
+/**
+ * Время по-московски — то же, что видит Татьяна в Telegram.
+ *
+ * В базе всё лежит в UTC. Claude читал его как есть и называл ей время на три
+ * часа раньше настоящего: «задание пришло в 13:25», когда на её экране 16:25.
+ * Спорить о времени, которого нет у неё на экране, — пустая трата её сил.
+ */
+function мск(iso) {
+  const d = new Date(new Date(iso).getTime() + 3 * 60 * 60 * 1000);
+  const п = (n) => String(n).padStart(2, '0');
+  return `${п(d.getUTCDate())}.${п(d.getUTCMonth() + 1)} ${п(d.getUTCHours())}:${п(d.getUTCMinutes())}`;
+}
+
 if (команда === 'список') {
   const t = await (await fetch(
     `${url}/rest/v1/claude_tasks?status=eq.new` +
@@ -56,7 +69,7 @@ if (команда === 'список') {
     console.log('НЕТ ЗАДАНИЙ');
   } else {
     for (const z of t) {
-      console.log(['ЗАДАНИЕ', z.id, z.created_at.slice(5, 16).replace('T', ' '), z.text].join('	'));
+      console.log(['ЗАДАНИЕ', z.id, `${мск(z.created_at)} МСК`, z.text].join('	'));
       // Задание почти всегда про ролик, присланный минуту назад. Без этой
       // строчки «Переделываем» читается как задание ни о чём — так и вышло
       // 4 августа со скатом.
@@ -67,7 +80,8 @@ if (команда === 'список') {
       }
     }
     for (const v of r) {
-      console.log(['ДОДЕЛКА', v.id, v.name, v.rework_note ?? 'без пояснения'].join('	'));
+      console.log(['ДОДЕЛКА', v.id, `${мск(v.rework_at)} МСК`, v.name,
+        v.rework_note ?? 'без пояснения'].join('	'));
     }
   }
 } else if (команда === 'готово') {
