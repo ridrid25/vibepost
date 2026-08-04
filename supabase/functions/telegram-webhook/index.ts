@@ -167,8 +167,12 @@ async function handleCommand(
 
     if (безЗаголовка) {
       const название = msg.text.trim().split("\n")[0].slice(0, 200);
-      await admin.from("incoming_videos")
-        .update({ name: название }).eq("id", безымянный!.id);
+      // То же правило, что и в приложении: название с тире = ролик согласован.
+      // Иначе названный в боте ролик оставался бы «не согласован».
+      await admin.from("incoming_videos").update({
+        name: название,
+        ...(название.includes("—") ? { ready: true } : {}),
+      }).eq("id", безымянный!.id);
       const заголовок = название.includes("—")
         ? название.split("—").pop()!.trim()
         : название;
