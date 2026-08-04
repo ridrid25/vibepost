@@ -1,0 +1,100 @@
+/**
+ * Задания, оставленные Татьяной через бота.
+ *
+ * Отдельный скрипт, чтобы дежурному Claude не нужно было знать ни адреса базы,
+ * ни ключей: он вызывает три понятные команды, а секреты остаются здесь.
+ *
+ *   node scripts/задания.mjs список          — что ждёт (задания и доделки)
+ *   node scripts/задания.mjs готово <id>     — задание выполнено
+ *   node scripts/задания.mjs доделано <id>   — ролик переделан, вернуть во «Входящие»
+ *   node scripts/задания.mjs сказать "текст" — написать Татьяне в бота
+ */
+import { readFileSync } from 'node:fs';
+
+const env = {};
+for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split(/\r?\n/)) {
+  const m = line.match(/^([A-Z_]+)=(.*)$/);
+  if (m) env[m[1]] = m[2].trim();
+}
+const url = env.SUPABASE_URL?.replace(/\/$/, '');
+const key = env.SUPABASE_SERVICE_ROLE_KEY;
+const h = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+
+async function бот(текст, разметка) {
+  const [p] = await (await fetch(
+    `${url}/rest/v1/profiles?error_notify_tg_id=not.is.null` +
+    `&select=error_notify_tg_id,error_notify_bot_id&limit=1`, { headers: h })).json();
+  const [b] = await (await fetch(
+    `${url}/rest/v1/bots?id=eq.${p.error_notify_bot_id}&select=token_secret_id`, { headers: h })).json();
+  const token = await (await fetch(`${url}/rest/v1/rpc/get_bot_token`, {
+    method: 'POST', headers: h, body: JSON.stringify({ p_secret_id: b.token_secret_id }),
+  })).json();
+  const r = await (await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: p.error_notify_tg_id, text: текст,
+      ...(разметка ? { parse_mode: разметка } : {}),
+    }),
+  })).json();
+  if (!r.ok) throw new Error(r.description);
+}
+
+const [команда, ...аргументы] = process.argv.slice(2);
+
+if (команда === 'список') {
+  const t = await (await fetch(
+    `${url}/rest/v1/claude_tasks?status=eq.new&select=id,text,created_at&order=created_at`,
+    { headers: h })).json();
+  // Ролики, возвращённые кнопкой «↩︎ На доделку», — такое же задание, только
+  // пришло из приложения, а не из бота. Разбираются в том же проходе.
+  const r = await (await fetch(
+    `${url}/rest/v1/incoming_videos?status=eq.rework` +
+    `&select=id,name,rework_note,rework_at&order=rework_at`, { headers: h })).json();
+
+  if (!t.length && !r.length) {
+    console.log('НЕТ ЗАДАНИЙ');
+  } else {
+    for (const z of t) {
+      console.log(['ЗАДАНИЕ', z.id, z.created_at.slice(5, 16).replace('T', ' '), z.text].join('	'));
+    }
+    for (const v of r) {
+      console.log(['ДОДЕЛКА', v.id, v.name, v.rework_note ?? 'без пояснения'].join('	'));
+    }
+  }
+} else if (команда === 'готово') {
+  const id = аргументы[0];
+  if (!id) throw new Error('нужен id задания');
+  await fetch(`${url}/rest/v1/claude_tasks?id=eq.${id}`, {
+    method: 'PATCH', headers: h,
+    body: JSON.stringify({ status: 'done', done_at: new Date().toISOString() }),
+  });
+  console.log('отмечено выполненным');
+} else if (команда === 'доделано') {
+  const id = аргументы[0];
+  if (!id) throw new Error('нужен id ролика');
+  await fetch(`${url}/rest/v1/incoming_videos?id=eq.${id}`, {
+    method: 'PATCH', headers: h,
+    body: JSON.stringify({ status: 'new', rework_note: null, rework_at: null }),
+  });
+  console.log('ролик возвращён во «Входящие»');
+} else if (команда === 'сказать') {
+  const текст = аргументы.join(' ').trim();
+  if (!текст) throw new Error('нечего говорить');
+  await бот(текст);
+  console.log('отправлено в бота');
+} else if (команда === 'промпт') {
+  // Промпт уходит одним блоком <pre> — по нему в Telegram есть кнопка
+  // «копировать», и Татьяна вставляет его в Gemini одним касанием.
+  // Лимит сообщения — 4096 знаков, поэтому JSON шлём без отступов.
+  const { readFileSync } = await import('node:fs');
+  const [файл, ...подпись] = аргументы;
+  if (!файл) throw new Error('нужен путь к json-промпту');
+  const компакт = JSON.stringify(JSON.parse(readFileSync(файл, 'utf8')));
+  const экран = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const шапка = подпись.join(' ').trim() || 'Промпт. Новый чат в Gemini, вставить одним куском:';
+  if (компакт.length > 3900) throw new Error(`промпт ${компакт.length} знаков — не влезет в сообщение`);
+  await бот(`${экран(шапка)}\n\n<pre>${экран(компакт)}</pre>`, 'HTML');
+  console.log(`отправлено, ${компакт.length} знаков`);
+} else {
+  console.log('команды: список | готово <id> | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
+}
