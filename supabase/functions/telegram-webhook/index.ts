@@ -131,16 +131,25 @@ async function handleCommand(
         : (первая.includes("—") && первая.length <= 80
           ? первая.split("—").pop()!.trim()
           : null);
-      await admin.from("incoming_videos").update({
-        ...(заголовок ? { hook: заголовок } : {}),
-        ...(!явное && заголовок ? { name: первая } : {}),
-        status: "rework",
-        rework_note: текст,
-        rework_at: new Date().toISOString(),
-      }).eq("id", свежий.id);
+      // Название — это знак согласия: ролик годится, можно вешать титры.
+      // Поэтому оно снимает пометку доработки, а замечание её ставит.
+      await admin.from("incoming_videos").update(заголовок
+        ? {
+          hook: заголовок,
+          ...(!явное ? { name: первая } : {}),
+          status: "new",
+          rework_note: null,
+          rework_at: null,
+        }
+        : {
+          status: "rework",
+          rework_note: текст,
+          rework_at: new Date().toISOString(),
+        }).eq("id", свежий.id);
       хвост = заголовок
         ? `\n\nЗаголовок в кадре: «${заголовок.toUpperCase()}». Вешаю титры.`
-        : `\n\nОтнёс к ролику «${свежий.name}» — он ушёл на доделку.`;
+        : `\n\nОтнёс к ролику «${свежий.name}» — он ушёл на доделку. ` +
+          `Титры не вешаю, пока не скажете, что годится.`;
     }
 
     await admin.from("claude_tasks").insert({
@@ -182,11 +191,14 @@ async function handleCommand(
 
     if (безЗаголовка && названиеПрислали) {
       const название = msg.text.trim().split("\n")[0].slice(0, 200);
-      // Галочку «готов» ставит только Татьяна и только сама — когда её
-      // устроит и заголовок, и титры. Автоматически не ставим никогда.
-      await admin.from("incoming_videos")
-        .update({ name: название }).eq("id", безымянный!.id);
       const заголовок = название.split("—").pop()!.trim();
+      // Название = «ролик годится». Снимает доработку, разрешает титры.
+      // Галочку «готово» это не ставит: её ставит только Татьяна и только
+      // после того, как увидит готовый ролик с титрами.
+      await admin.from("incoming_videos").update({
+        name: название, hook: заголовок,
+        status: "new", rework_note: null, rework_at: null,
+      }).eq("id", безымянный!.id);
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
