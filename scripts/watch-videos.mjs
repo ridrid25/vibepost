@@ -533,10 +533,18 @@ async function подтвердитьДоделки() {
   };
   let новые;
   try {
-    новые = await (await fetch(
-      `${url}/rest/v1/incoming_videos?status=eq.rework&rework_ack_at=is.null` +
-      `&select=id,name,rework_note&order=rework_at&limit=5`, { headers: h },
+    // Не «подтверждения ещё не было», а «замечание новее подтверждения»:
+    // иначе второе замечание к тому же ролику уходило в тишину. Сравнение
+    // двух столбцов PostgREST не умеет, поэтому отбираем здесь.
+    const все = await (await fetch(
+      `${url}/rest/v1/incoming_videos?status=eq.rework` +
+      `&select=id,name,rework_note,rework_at,rework_ack_at&order=rework_at&limit=20`,
+      { headers: h },
     )).json();
+    новые = Array.isArray(все)
+      ? все.filter((в) => !в.rework_ack_at ||
+          (в.rework_at && new Date(в.rework_at) > new Date(в.rework_ack_at))).slice(0, 5)
+      : [];
   } catch {
     return;                         // сеть моргнула — попробуем на следующем тике
   }
@@ -555,6 +563,9 @@ async function подтвердитьДоделки() {
     console.log(`[доделка] подтвердил: ${в.name}`);
   }
 }
+
+/** Ролики, о которых уже написано «жду название» — чтобы не повторяться. */
+const ждутНазвания = new Set();
 
 async function присланныеБоту() {
   if (!url || !serviceKey) return;
@@ -577,9 +588,15 @@ async function присланныеБоту() {
     // Без названия заголовок в кадр не поставить, а выпускать ролик без него
     // нельзя. Ждём: бот при получении уже попросил прислать название.
     if (!заголовокИз(ролик.name)) {
-      console.log(`[из бота] «${ролик.name}» — жду название, заголовок брать неоткуда`);
+      // Один раз на ролик: проверка идёт каждые несколько секунд, и без
+      // этого журнал забивается одной и той же строкой.
+      if (!ждутНазвания.has(ролик.id)) {
+        ждутНазвания.add(ролик.id);
+        console.log(`[из бота] «${ролик.name}» — жду название, заголовок брать неоткуда`);
+      }
       continue;
     }
+    ждутНазвания.delete(ролик.id);
     const исходник = join(tmpdir(), `bot-${ролик.id}.mp4`);
     let готовый = null;
     try {
