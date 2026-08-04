@@ -479,6 +479,23 @@ async function решениеПоРолику(
   const кто = ролик?.tag || ролик?.name || "ролик";
   const варианты: string[] = ролик?.hook_options ?? [];
 
+  // «Другие пять» — новые варианты придумывает отдельная функция.
+  if (выборЗаголовка && части[2] === "more") {
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: cq.id, text: "Придумываю…" }),
+    }).catch(() => {});
+    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/hook-options`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ video_id: videoId, chat_id: cq.message?.chat.id ?? cq.from.id }),
+    }).catch(() => {});
+    return;
+  }
+
   if (выборЗаголовка) {
     const заголовок = (варианты[номер] ?? "").trim();
     await admin.from("incoming_videos").update({
@@ -546,6 +563,8 @@ async function решениеПоРолику(
               варианты.slice(3).map((_, i) => ({
                 text: String(i + 4), callback_data: `hk:${videoId}:${i + 3}`,
               })),
+              // Ни один не подошёл — Claude придумывает пять новых.
+              [{ text: "🔄 Другие пять", callback_data: `hk:${videoId}:more` }],
             ],
           },
         }
