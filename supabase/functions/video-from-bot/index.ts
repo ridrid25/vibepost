@@ -103,8 +103,13 @@ const СХЕМА_РАЗБОРА = {
       type: "STRING",
       description: "реплика героя дословно, как слышно, со знаками препинания",
     },
+    tag: {
+      type: "STRING",
+      description: "одно-два слова по-русски: кто в кадре. Например «скорпион», " +
+        "«скат», «жираф у ящика». Не предложение, без точки",
+    },
   },
-  required: ["review", "ok", "speech"],
+  required: ["review", "ok", "speech", "tag"],
 };
 
 /** Показывает ролик Gemini и просит разбор и дословную реплику. */
@@ -112,7 +117,7 @@ async function разобрать(
   admin: SupabaseClient,
   bytes: Uint8Array,
   задумка: string,
-): Promise<{ review: string; ok: boolean; speech: string }> {
+): Promise<{ review: string; ok: boolean; speech: string; tag: string }> {
   const { token, project } = await googleToken(admin);
   const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
     `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
@@ -138,7 +143,9 @@ async function разобрать(
               `что смущает. Хвалить не надо, отмечай только существенное.\n\n` +
               `Отдельной строкой напиши РЕПЛИКУ дословно, как её слышно, ` +
               `со знаками препинания — по ней Татьяна проверяет, не проглотил ли ` +
-              `герой окончание.`,
+              `герой окончание.\n\n` +
+              `И дай МЕТКУ: одно-два слова, кто в кадре. По ней Татьяна узнаёт ` +
+              `ролик в переписке, пока у него нет названия.`,
           },
         ],
       }],
@@ -227,14 +234,14 @@ Deno.serve(async (req) => {
     if (upErr) throw new Error(upErr.message);
     const videoUrl = admin.storage.from("post-photos").getPublicUrl(key).data.publicUrl;
 
-    let разбор: { review: string; ok: boolean; speech: string };
+    let разбор: { review: string; ok: boolean; speech: string; tag: string };
     try {
       разбор = await разобрать(admin, bytes, задумка);
     } catch (e) {
       разбор = {
         review: `Разобрать ролик не вышло: ${e instanceof Error ? e.message : String(e)}`,
         ok: true,
-        speech: "",
+        speech: "", tag: "",
       };
     }
 
@@ -245,6 +252,7 @@ Deno.serve(async (req) => {
       video_url: videoUrl,
       status: "new",
       review: разбор.review,
+      tag: разбор.tag?.slice(0, 40) || null,
       caption_options: [],
       ready: false,
     }).select("id").single();
