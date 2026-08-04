@@ -237,7 +237,7 @@ function moveTo(dir, filePath, пометка = '') {
 const ПИТОН = { env: { ...process.env, PYTHONIOENCODING: 'utf-8' } };
 
 /** Короткое сообщение Татьяне в бота. Молча падает, если бот недоступен. */
-async function вБота(текст) {
+async function вБота(текст, кнопки) {
   try {
     const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' };
     const [p] = await (await fetch(
@@ -250,7 +250,10 @@ async function вБота(текст) {
     })).json();
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: p.error_notify_tg_id, text: текст }),
+      body: JSON.stringify({
+        chat_id: p.error_notify_tg_id, text: текст,
+        ...(кнопки ? { reply_markup: { inline_keyboard: кнопки } } : {}),
+      }),
     });
   } catch { /* без связи — не беда, обработка важнее */ }
 }
@@ -264,7 +267,7 @@ async function вБота(текст) {
  *
  * Ориентиры из CLAUDE.md: среднее 20+, худшая секунда не ниже 10.
  */
-async function замер(input, имя) {
+async function замер(input, имя, id) {
   let вывод;
   try {
     вывод = await run('python', [join(POSTPROD_DIR, 'measure.py'), input], ПИТОН);
@@ -294,8 +297,14 @@ async function замер(input, имя) {
       ? 'Числа в норме — по динамике вопросов нет.'
       : `Ниже нормы${совет ? `, провал на ${совет} с` : ''}. ` +
         'Промт переписываю сам, спрашивать не буду.') +
-    '\n\nПосмотрите ролик. Годится — пришлите название, тогда повешу титры ' +
-    'и заголовок. Не годится — напишите замечание, титры трогать не буду.',
+    '\n\nПосмотрите ролик и нажмите кнопку — тогда я точно пойму, о каком ' +
+    'ролике речь.',
+    // Кнопки несут в себе id ролика. Без них Татьяна пишет замечание, не зная,
+    // к чему оно прилипнет: бот угадывал ролик по времени присылки.
+    id ? [[
+      { text: '✅ Годится', callback_data: `vid:ok:${id}` },
+      { text: '✏️ Не годится', callback_data: `vid:no:${id}` },
+    ]] : undefined,
   );
   return { среднее, худшая, склеек, годится, совет };
 }
@@ -624,7 +633,7 @@ async function присланныеБоту() {
         // «Ролик из Telegram» Татьяна в переписке не узнаёт, а два замера
         // подряд с одинаковой подписью не различить вовсе.
         const подпись = (ролик.tag ?? '').trim() || ролик.name;
-        await записатьЗамер(ролик.id, await замер(рабочий, подпись));
+        await записатьЗамер(ролик.id, await замер(рабочий, подпись, ролик.id));
       }
       // Титры — только когда есть заголовок. Ролик остаётся необработанным
       // и дождётся названия, а числа Татьяна уже получила.

@@ -63,7 +63,7 @@ async function handleCommand(
   // Владелец = тот, чей Telegram ID записан в настройках уведомлений
   const { data: profile } = await admin
     .from("profiles")
-    .select("id, error_notify_bot_id, awaiting_task")
+    .select("id, error_notify_bot_id, awaiting_task, awaiting_video_id, awaiting_kind")
     .eq("error_notify_tg_id", fromId)
     .maybeSingle();
   if (!profile?.error_notify_bot_id) return; // незнакомцам не отвечаем
@@ -96,6 +96,45 @@ async function handleCommand(
 
   // Режим «жду текст задания»: следующее сообщение — не команда, а задание
   // для Claude. Проверяется до разбора команд, иначе съест их как текст.
+  // Кнопка под замером назвала ролик прямо — угадывать не нужно.
+  if (!cmd && profile.awaiting_video_id) {
+    const текст = msg.text.trim();
+    const первая = текст.split("\n")[0].trim();
+    const ждём = profile.awaiting_kind;
+    const { data: ролик } = await admin
+      .from("incoming_videos").select("id, name, tag")
+      .eq("id", profile.awaiting_video_id).maybeSingle();
+
+    let ответ: string;
+    if (ждём === "name") {
+      const заголовок = первая.includes("—") ? первая.split("—").pop()!.trim() : первая;
+      await admin.from("incoming_videos").update({
+        name: первая.includes("—") ? первая.slice(0, 200) : `${ролик?.tag ?? "Ролик"} — ${первая}`,
+        hook: заголовок,
+        status: "new", rework_note: null, rework_at: null,
+      }).eq("id", profile.awaiting_video_id);
+      ответ = `Заголовок в кадре: «${заголовок.toUpperCase()}». Вешаю титры.`;
+    } else {
+      await admin.from("incoming_videos").update({
+        status: "rework", rework_note: текст, rework_at: new Date().toISOString(),
+      }).eq("id", profile.awaiting_video_id);
+      await admin.from("claude_tasks").insert({
+        user_id: profile.id, text: текст, video_id: profile.awaiting_video_id,
+      });
+      ответ = `Записал замечание к ролику «${ролик?.tag ?? ролик?.name}». ` +
+        `Титры не вешаю, перепишу промт.`;
+    }
+    await admin.from("profiles")
+      .update({ awaiting_video_id: null, awaiting_kind: null, awaiting_task: false })
+      .eq("id", profile.id);
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: msg.chat.id, text: ответ }),
+    }).catch(() => {});
+    return;
+  }
+
   if (!cmd && profile.awaiting_task) {
     const текст = msg.text.trim();
 
@@ -409,6 +448,112 @@ async function handleCommand(
   }
 }
 
+/**
+ * Кнопки «Годится» / «Не годится» под замером.
+ *
+ * Раньше замечание Татьяны привязывалось к ролику по времени: берётся тот,
+ * что пришёл в последние 20 минут. Она справедливо спросила — а к какому
+ * ролику это будет правка? Теперь ролик назван прямо в кнопке, и бот
+ * запоминает его до следующего сообщения.
+ */
+async function решениеПоРолику(
+  admin: SupabaseClient,
+  cq: { id: string; data: string; from: { id: number }; message?: { chat: { id: number } } },
+) {
+  const части = String(cq.data).split(":");
+  const выборЗаголовка = части[0] === "hk";
+  const что = выборЗаголовка ? "hook" : части[1];
+  const videoId = выборЗаголовка ? части[1] : части[2];
+  const номер = выборЗаголовка ? Number(части[2]) : -1;
+  const { data: profile } = await admin
+    .from("profiles").select("id, error_notify_bot_id")
+    .eq("error_notify_tg_id", String(cq.from.id)).maybeSingle();
+  if (!profile) return;
+
+  const { data: bot } = await admin
+    .from("bots").select("token_secret_id").eq("id", profile.error_notify_bot_id).maybeSingle();
+  const { data: token } = await admin
+    .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
+  const { data: ролик } = await admin
+    .from("incoming_videos").select("tag, name, hook_options").eq("id", videoId).maybeSingle();
+  const кто = ролик?.tag || ролик?.name || "ролик";
+  const варианты: string[] = ролик?.hook_options ?? [];
+
+  if (выборЗаголовка) {
+    const заголовок = (варианты[номер] ?? "").trim();
+    await admin.from("incoming_videos").update({
+      hook: заголовок,
+      name: `${кто} — ${заголовок}`,
+      status: "new", rework_note: null, rework_at: null,
+    }).eq("id", videoId);
+    await admin.from("profiles")
+      .update({ awaiting_video_id: null, awaiting_kind: null }).eq("id", profile.id);
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: cq.id }),
+    }).catch(() => {});
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: cq.message?.chat.id ?? cq.from.id,
+        text: `Заголовок в кадре: «${заголовок.toUpperCase()}». Вешаю титры.`,
+      }),
+    }).catch(() => {});
+    return;
+  }
+
+  await admin.from("profiles").update({
+    awaiting_video_id: videoId,
+    awaiting_kind: что === "ok" ? "name" : "note",
+    awaiting_task: false,
+  }).eq("id", profile.id);
+
+  // Заголовок придумывает Claude, Татьяна только выбирает. Печатать ей
+  // ничего не нужно — но свой вариант всегда можно прислать текстом.
+  const естьВарианты = что === "ok" && варианты.length > 0;
+  const текст = что !== "ok"
+    ? `Ролик «${кто}» на доработку.
+
+Напишите следующим сообщением, что не так. ` +
+      `Титры вешать не буду.`
+    : естьВарианты
+    ? `Ролик «${кто}» годится. Выберите заголовок в кадр:
+
+` +
+      варианты.map((h, i) => `${i + 1}. ${h.toUpperCase()}`).join("\n") +
+      `
+
+Не нравится ни один — пришлите свой текстом.`
+    : `Ролик «${кто}» годится.
+
+Пришлите заголовок следующим сообщением.`;
+
+  await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: cq.id }),
+  }).catch(() => {});
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: cq.message?.chat.id ?? cq.from.id, text: текст,
+      ...(естьВарианты
+        ? {
+          reply_markup: {
+            inline_keyboard: [
+              варианты.slice(0, 3).map((_, i) => ({
+                text: String(i + 1), callback_data: `hk:${videoId}:${i}`,
+              })),
+              варианты.slice(3).map((_, i) => ({
+                text: String(i + 4), callback_data: `hk:${videoId}:${i + 3}`,
+              })),
+            ],
+          },
+        }
+        : {}),
+    }),
+  }).catch(() => {});
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
@@ -509,9 +654,17 @@ Deno.serve(async (req) => {
     ) {
       await handleCommand(admin, update.message);
     } else if (update.callback_query) {
-      // Нажатия кнопок обрабатывают отдельные функции — их можно править,
+      // Кнопки «Годится» / «Не годится» под замером. Разбираем здесь: они
+      // только запоминают, о каком ролике пойдёт речь дальше, — чтобы
+      // следующее сообщение Татьяны не приходилось привязывать по времени.
+      const данные = String(update.callback_query.data ?? "");
+      if (данные.startsWith("vid:") || данные.startsWith("hk:")) {
+        await решениеПоРолику(admin, update.callback_query);
+        return json(200, { ok: true });
+      }
+      // Остальные нажатия обрабатывают отдельные функции — их можно править,
       // не трогая вебхук. Дайджест новостей помечен префиксом «dg:».
-      const дайджест = String(update.callback_query.data ?? "").startsWith("dg:");
+      const дайджест = данные.startsWith("dg:");
       await fetch(
         `${Deno.env.get("SUPABASE_URL")}/functions/v1/${дайджест ? "digest-button" : "idea-button"}`,
         {

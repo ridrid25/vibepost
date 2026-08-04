@@ -108,8 +108,16 @@ const СХЕМА_РАЗБОРА = {
       description: "одно-два слова по-русски: кто в кадре. Например «скорпион», " +
         "«скат», «жираф у ящика». Не предложение, без точки",
     },
+    hooks: {
+      type: "ARRAY",
+      description: "ровно пять вариантов ЗАГОЛОВКА в кадр: по-русски, 2-5 слов, " +
+        "без точки в конце. Это надпись сверху первые три секунды, она должна " +
+        "цеплять и работать вместе с репликой героя, а не пересказывать её. " +
+        "Разные по приёму: реплика героя, цифра, вопрос, обещание, угроза",
+      items: { type: "STRING" },
+    },
   },
-  required: ["review", "ok", "speech", "tag"],
+  required: ["review", "ok", "speech", "tag", "hooks"],
 };
 
 /** Показывает ролик Gemini и просит разбор и дословную реплику. */
@@ -117,7 +125,7 @@ async function разобрать(
   admin: SupabaseClient,
   bytes: Uint8Array,
   задумка: string,
-): Promise<{ review: string; ok: boolean; speech: string; tag: string }> {
+): Promise<{ review: string; ok: boolean; speech: string; tag: string; hooks: string[] }> {
   const { token, project } = await googleToken(admin);
   const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
     `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
@@ -145,7 +153,12 @@ async function разобрать(
               `со знаками препинания — по ней Татьяна проверяет, не проглотил ли ` +
               `герой окончание.\n\n` +
               `И дай МЕТКУ: одно-два слова, кто в кадре. По ней Татьяна узнаёт ` +
-              `ролик в переписке, пока у него нет названия.`,
+              `ролик в переписке, пока у него нет названия.
+
+` +
+              `И придумай ПЯТЬ ЗАГОЛОВКОВ в кадр — надпись сверху первые три ` +
+              `секунды. Придумывать их должен Claude, а не Татьяна: она только ` +
+              `выбирает. Коротко, 2-5 слов, по-русски, без точки.`,
           },
         ],
       }],
@@ -234,14 +247,14 @@ Deno.serve(async (req) => {
     if (upErr) throw new Error(upErr.message);
     const videoUrl = admin.storage.from("post-photos").getPublicUrl(key).data.publicUrl;
 
-    let разбор: { review: string; ok: boolean; speech: string; tag: string };
+    let разбор: { review: string; ok: boolean; speech: string; tag: string; hooks: string[] };
     try {
       разбор = await разобрать(admin, bytes, задумка);
     } catch (e) {
       разбор = {
         review: `Разобрать ролик не вышло: ${e instanceof Error ? e.message : String(e)}`,
         ok: true,
-        speech: "", tag: "",
+        speech: "", tag: "", hooks: [],
       };
     }
 
@@ -253,6 +266,7 @@ Deno.serve(async (req) => {
       status: "new",
       review: разбор.review,
       tag: разбор.tag?.slice(0, 40) || null,
+      hook_options: (разбор.hooks ?? []).slice(0, 5).map((h) => h.slice(0, 60)),
       caption_options: [],
       ready: false,
     }).select("id").single();
