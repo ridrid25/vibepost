@@ -268,7 +268,7 @@ ${выбранная}
   if (action === "edit") {
     const новая = String(cq.new_line ?? "").trim();
     const { data: правимая } = await admin
-      .from("video_ideas").select("id, slug, hook, animal")
+      .from("video_ideas").select("id, user_id, slug, hook, animal")
       .eq("user_id", profile.id).eq("tg_message_id", messageId).maybeSingle();
     if (!правимая || !новая) {
       await tg("sendMessage", {
@@ -305,7 +305,7 @@ ${выбранная}
   }
 
   const { data: idea } = await admin
-    .from("video_ideas").select("id, slug, hook, line, animal, prompt")
+    .from("video_ideas").select("id, user_id, slug, hook, line, animal, prompt")
     .eq("id", ideaId).eq("user_id", profile.id).maybeSingle();
   if (!idea) {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Идея не найдена" });
@@ -344,13 +344,24 @@ ${выбранная}
   // критика — то есть мимо правил речи из JOURNAL.md. Теперь бот только
   // записывает выбранную идею заданием.
   if (action === "self") {
-    await admin.from("claude_tasks").insert({
+    const { error: сбой } = await admin.from("claude_tasks").insert({
       user_id: idea.user_id,
       text: `Написать промт ролика по идее. Герой: ${idea.animal}. ` +
         `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
         `Порядок обязателен: scenarist → director → cinematographer → critic, ` +
         `перед этим JOURNAL.md и PROCESS.md. Промт прислать одним блоком.`,
     });
+    // Отказ базы нельзя выдавать за успех: 7 августа идея пропала молча, а
+    // Татьяне ушло «Идею принял». Она ждала промт, которого никто не писал.
+    if (сбой) {
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text: `Идею записать НЕ УДАЛОСЬ: ${сбой.message}\n\n` +
+          `Нажмите кнопку ещё раз. Если повторится — это поломка, а не ваша ` +
+          `ошибка, напишите мне.`,
+      });
+      return json(200, { ok: true });
+    }
     await tg("sendMessage", {
       chat_id: chatId,
       text: `<b>${idea.hook}</b>\n\n<b>Что говорит герой:</b>\n${idea.line}\n\n` +
