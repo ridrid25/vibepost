@@ -9,7 +9,7 @@
  *   node scripts/задания.mjs доделано <id>   — ролик переделан, вернуть во «Входящие»
  *   node scripts/задания.mjs сказать "текст" — написать Татьяне в бота
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const env = {};
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split(/\r?\n/)) {
@@ -55,6 +55,14 @@ function мск(iso) {
 }
 
 if (команда === 'список') {
+  // Отметка «окно Claude открыто и работает». Эту команду вызывает хук на
+  // каждом сообщении Татьяны, так что свежесть файла = живой разговор.
+  // Приёмник по ней понимает, что поднимать дежурного не надо: иначе два
+  // Claude возьмутся за одно задание.
+  try {
+    writeFileSync(new URL('../claude-alive.txt', import.meta.url), new Date().toISOString());
+  } catch { /* отметка не критична — список важнее */ }
+
   const t = await (await fetch(
     `${url}/rest/v1/claude_tasks?status=eq.new` +
     `&select=id,text,created_at,video_id,incoming_videos(name,measure_avg,measure_worst,video_url)` +

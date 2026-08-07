@@ -602,9 +602,16 @@ const ждутНазвания = new Set();
  *
  * Минута отсрочки: если Claude сейчас работает, он увидит задание сам —
  * через хук завершения. Поднимать второго ни к чему.
+ *
+ * И второе условие. Пока Татьяна разговаривает с Claude в открытом окне, он
+ * отмечается в claude-alive.txt на каждом её сообщении. Свежая отметка значит,
+ * что задание уже у него на глазах: поднимать дежурного нельзя — два Claude
+ * возьмутся за одно задание и наперегонки напишут ей два разных ответа.
  */
 const ОТСРОЧКА_МС = 60 * 1000;
+const ЖИВ_МС = 15 * 60 * 1000;
 const замокДежурного = join(base, 'dezhurny.lock');
+const отметкаЖив = join(base, 'claude-alive.txt');
 
 async function разбудитьЕслиЖдут() {
   if (!url || !serviceKey) return;
@@ -620,6 +627,11 @@ async function разбудитьЕслиЖдут() {
   if (!Array.isArray(ждут) || !ждут.length) return;
   if (Date.now() - new Date(ждут[0].created_at).getTime() < ОТСРОЧКА_МС) return;
 
+  // Открытое окно Claude само разберёт задание.
+  try {
+    if (Date.now() - statSync(отметкаЖив).mtimeMs < ЖИВ_МС) return;
+  } catch { /* отметки нет — значит, окно закрыто */ }
+
   // Дежурный уже поднят — второго не надо.
   if (existsSync(замокДежурного)) {
     try {
@@ -628,8 +640,12 @@ async function разбудитьЕслиЖдут() {
     } catch { /* процесс из замка умер — можно поднимать заново */ }
   }
 
-  const дежурный = fileURLToPath(new URL('scripts/dezhurny.mjs', root));
-  const дитя = spawn('cmd.exe', ['/c', 'node', дежурный], {
+  // Через wscript, а не через cmd. У detached-процесса Windows заводит свою
+  // консоль, и windowsHide её не убирает: 7 августа поверх всех окон
+  // выскакивало чёрное окно с надписью claude. Дежурный.vbs запускает
+  // скрыто по-настоящему (третий параметр Run = 0).
+  const пускач = fileURLToPath(new URL('Дежурный.vbs', root));
+  const дитя = spawn('wscript.exe', ['//B', '//Nologo', пускач], {
     detached: true, stdio: 'ignore', windowsHide: true,
   });
   writeFileSync(замокДежурного, String(дитя.pid));

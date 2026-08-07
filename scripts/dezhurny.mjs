@@ -9,6 +9,7 @@
  * а здесь текст читается как UTF-8 и передаётся Claude без искажений.
  */
 import { spawn } from 'node:child_process';
+import { openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -57,6 +58,8 @@ const [бинарь, префикс] = process.platform === 'win32'
   ? ['cmd.exe', ['/c', 'claude']]
   : ['claude', []];
 
+const журнал = openSync(join(корень, 'dezhurny.log'), 'a');
+
 const дитя = spawn(
   бинарь,
   [
@@ -64,7 +67,10 @@ const дитя = spawn(
     '-p', ЗАДАНИЕ,
     '--allowedTools', 'Bash,Read,Write,Edit,Glob,Grep',
   ],
-  { cwd: корень, stdio: 'inherit' },
+  // Не 'inherit': унаследованный вывод требует консоли, и Windows
+  // открывает поверх всего чёрное окно. Татьяна принимала его за
+  // зависший компьютер и не знала, можно ли закрывать. Пишем в журнал.
+  { cwd: корень, stdio: ['ignore', журнал, журнал] },
 );
 
 дитя.on('exit', (код) => process.exit(код ?? 0));
