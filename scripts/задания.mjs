@@ -69,9 +69,19 @@ if (команда === 'список') {
     `&order=created_at`, { headers: h })).json();
   // Ролики, возвращённые кнопкой «↩︎ На доделку», — такое же задание, только
   // пришло из приложения, а не из бота. Разбираются в том же проходе.
-  const r = await (await fetch(
+  // Замечание, на которое уже ответили и по которому ролик уже обработан,
+  // в списке не показываем. Иначе оно висит вечно: доделка от 2 августа
+  // «почему нет замеров и титров?» разобрана 3-го, а мозолила глаза 7-го и
+  // топила под собой свежие задания. Пометку во «Входящих» при этом не
+  // трогаем — снять её может только Татьяна.
+  const все = await (await fetch(
     `${url}/rest/v1/incoming_videos?status=eq.rework` +
-    `&select=id,name,rework_note,rework_at&order=rework_at`, { headers: h })).json();
+    `&select=id,name,rework_note,rework_at,rework_ack_at,polished_at&order=rework_at`,
+    { headers: h })).json();
+  const r = все.filter((v) => !(
+    v.rework_ack_at && v.polished_at &&
+    new Date(v.rework_ack_at) > new Date(v.rework_at)
+  ));
 
   if (!t.length && !r.length) {
     console.log('НЕТ ЗАДАНИЙ');
