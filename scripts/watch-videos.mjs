@@ -259,6 +259,125 @@ async function вБота(текст, кнопки) {
 }
 
 /**
+ * Полоса хода работы в боте.
+ *
+ * Пока бригада пишет промт, окно разговора молчит по пятнадцать минут, и
+ * Татьяна не отличает работу от зависшего компьютера. Строку дела заводит
+ * Claude (scripts/ход.mjs), но двигать полосу он не может — он в это время
+ * занят. Двигает приёмник: он и так опрашивает базу каждые пять секунд.
+ *
+ * Правим одно и то же сообщение, а не шлём новые: иначе бот засыплет её
+ * лентой из сорока одинаковых полос. Раз в 15 секунд — Telegram разрешает
+ * около двадцати правок в минуту на чат, берём с большим запасом.
+ */
+const ЧАСЫ = ['🕐', '🕑', '🕒', '🕓', '🕔', '🕕', '🕖', '🕗', '🕘', '🕙', '🕚', '🕛'];
+let кадрПолосы = 0;
+let тиковДоПравки = 0;
+let ботКэш = null;
+
+async function ботДоступ() {
+  if (ботКэш) return ботКэш;
+  const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' };
+  const [p] = await (await fetch(
+    `${url}/rest/v1/profiles?error_notify_tg_id=not.is.null` +
+    `&select=error_notify_tg_id,error_notify_bot_id&limit=1`, { headers: h })).json();
+  const [b] = await (await fetch(
+    `${url}/rest/v1/bots?id=eq.${p.error_notify_bot_id}&select=token_secret_id`, { headers: h })).json();
+  const token = await (await fetch(`${url}/rest/v1/rpc/get_bot_token`, {
+    method: 'POST', headers: h, body: JSON.stringify({ p_secret_id: b.token_secret_id }),
+  })).json();
+  ботКэш = { token, chat: p.error_notify_tg_id, h };
+  return ботКэш;
+}
+
+function текстПолосы(дело, кадр) {
+  const всего = дело.stages.length;
+  const сделано = Math.max(0, Math.min(дело.step, всего));
+  const ЯЧЕЕК = 10;
+  const залито = Math.round((сделано / всего) * ЯЧЕЕК);
+  let бар = '▰'.repeat(залито);
+  if (дело.done_at) {
+    бар = '▰'.repeat(ЯЧЕЕК);
+  } else {
+    // Огонёк бежит по незалитой части — это и есть признак жизни.
+    const пусто = ЯЧЕЕК - залито;
+    const где = пусто ? кадр % пусто : 0;
+    бар += Array.from({ length: пусто }, (_, i) => (i === где ? '◆' : '▱')).join('');
+  }
+
+  const строки = дело.stages.map((имя, i) => {
+    if (i < сделано) return `✅ ${имя}`;
+    if (i === сделано && !дело.done_at) return `🔸 ${имя}${дело.note ? ` — ${дело.note}` : ''}`;
+    return `▫️ ${имя}`;
+  });
+
+  const мин = Math.max(1, Math.round((Date.now() - new Date(дело.started_at).getTime()) / 60000));
+  const шапка = дело.done_at
+    ? `✅ ${дело.title}`
+    : `${ЧАСЫ[кадр % ЧАСЫ.length]} ${дело.title}`;
+  const низ = дело.done_at
+    ? `${дело.outcome === 'готово' ? 'Готово' : дело.outcome} · заняло ${мин} мин`
+    : `идёт ${мин} мин · компьютер не завис, работа пишется`;
+
+  return `${шапка}\n\n${бар}  ${сделано}/${всего}\n\n${строки.join('\n')}\n\n${низ}`;
+}
+
+async function двигатьПолосу() {
+  if (!url || !serviceKey) return;
+  if (тиковДоПравки-- > 0) return;
+  тиковДоПравки = 2;                       // раз в 15 секунд при опросе в 5
+
+  let дела;
+  try {
+    const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
+    дела = await (await fetch(
+      `${url}/rest/v1/work_progress?or=(done_at.is.null,and(done_at.not.is.null,tg_message_id.not.is.null))` +
+      `&order=started_at.desc&limit=3`, { headers: h })).json();
+  } catch {
+    return;
+  }
+  if (!Array.isArray(дела) || !дела.length) return;
+
+  кадрПолосы++;
+  for (const дело of дела) {
+    // Законченное дело правим один раз — и снимаем номер сообщения, чтобы
+    // больше к нему не возвращаться.
+    if (дело.done_at && !дело.tg_message_id) continue;
+
+    let доступ;
+    try { доступ = await ботДоступ(); } catch { return; }
+    const текст = текстПолосы(дело, кадрПолосы);
+
+    try {
+      if (!дело.tg_message_id) {
+        const r = await (await fetch(`https://api.telegram.org/bot${доступ.token}/sendMessage`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: доступ.chat, text: текст }),
+        })).json();
+        if (r?.result?.message_id) {
+          await fetch(`${url}/rest/v1/work_progress?id=eq.${дело.id}`, {
+            method: 'PATCH', headers: доступ.h,
+            body: JSON.stringify({ tg_message_id: r.result.message_id }),
+          });
+        }
+      } else {
+        await fetch(`https://api.telegram.org/bot${доступ.token}/editMessageText`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chat_id: доступ.chat, message_id: дело.tg_message_id, text: текст,
+          }),
+        });
+        if (дело.done_at) {
+          await fetch(`${url}/rest/v1/work_progress?id=eq.${дело.id}`, {
+            method: 'PATCH', headers: доступ.h, body: JSON.stringify({ tg_message_id: null }),
+          });
+        }
+      }
+    } catch { /* связь моргнула — поправим на следующем тике */ }
+  }
+}
+
+/**
  * Замер динамики — первым делом, до всякой обработки.
  *
  * Смысл: если ролик слабый по удержанию, Татьяна должна узнать это сразу и
@@ -788,6 +907,7 @@ async function tick() {
     // Первым делом: подтверждение доделок не должно ждать обработки роликов.
     // Обработка занимает минуты, а Татьяне важно услышать «принял» сразу.
     await подтвердитьДоделки();
+    await двигатьПолосу();
     await разбудитьЕслиЖдут();
     await просмотр(readyDir, false);
     await просмотр(dubDir, true);
