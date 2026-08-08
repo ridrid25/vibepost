@@ -34,3 +34,9 @@ create policy "свои строки хода работы" on public.work_progr
 
 -- Приложение слушает изменения и двигает полосу без перезагрузки страницы.
 alter publication supabase_realtime add table public.work_progress;
+
+-- Realtime отдаёт обновления надёжно только при полной replica identity:
+-- иначе в событии приходит один лишь первичный ключ, и проверка прав по
+-- user_id для UPDATE и DELETE выполняется вслепую. Полоса в приложении
+-- из-за этого может перестать двигаться на середине.
+alter table public.work_progress replica identity full;
