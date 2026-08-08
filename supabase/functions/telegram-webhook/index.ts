@@ -115,8 +115,12 @@ async function handleCommand(
       }).eq("id", profile.awaiting_video_id);
       ответ = `Заголовок в кадре: «${заголовок.toUpperCase()}». Вешаю титры.`;
     } else {
+      // rework_ack_at ставим сразу: ответ Татьяне уходит прямо здесь, и
+      // приёмник не должен подтверждать то же самое второй раз. 8 августа на
+      // одно её замечание бот ответил дважды и назвал ролик по-разному.
+      const сейчас = new Date().toISOString();
       await admin.from("incoming_videos").update({
-        status: "rework", rework_note: текст, rework_at: new Date().toISOString(),
+        status: "rework", rework_note: текст, rework_at: сейчас, rework_ack_at: сейчас,
       }).eq("id", profile.awaiting_video_id);
       await admin.from("claude_tasks").insert({
         user_id: profile.id, text: текст, video_id: profile.awaiting_video_id,
@@ -183,7 +187,9 @@ async function handleCommand(
         : {
           status: "rework",
           rework_note: текст,
+          // Подтверждение уходит тут же, ниже. Второе от приёмника не нужно.
           rework_at: new Date().toISOString(),
+          rework_ack_at: new Date().toISOString(),
         }).eq("id", свежий.id);
       хвост = заголовок
         ? `\n\nЗаголовок в кадре: «${заголовок.toUpperCase()}». Вешаю титры.`
