@@ -450,7 +450,7 @@ async function handleCommand(
         keyboard: [
           [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
           [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
-          [{ text: "✍️ Задание" }, { text: "🛠 Если сломалось" }],
+          [{ text: "🛠 Если сломалось" }],
         ],
         resize_keyboard: true,
         is_persistent: true,
@@ -544,6 +544,34 @@ async function решениеПоРолику(
     return;
   }
 
+  // «🔁 Переписывай сам» — Татьяне нечего добавить, промт целиком на Claude.
+  // Отдельная кнопка нужна затем, что раньше выбор был из двух: либо принять
+  // плохой ролик, либо печатать замечание. Молчание при этом ничего не
+  // значило, и промт мог не переписать никто.
+  if (что === "self") {
+    await admin.from("claude_tasks").insert({
+      user_id: profile.id, video_id: videoId,
+      text: `Ролик «${кто}»: переписать промт самому. Своих пожеланий у Татьяны нет — ` +
+        `разбери замер по секундам, найди провал и почини его.`,
+    });
+    await admin.from("incoming_videos")
+      .update({ status: "rework", rework_at: new Date().toISOString(),
+                rework_ack_at: new Date().toISOString() }).eq("id", videoId);
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: cq.id, text: "Переписываю" }),
+    }).catch(() => {});
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: cq.message?.chat.id ?? cq.from.id,
+        text: `Ролик «${кто}»: переписываю промт сам. От вас ничего не нужно — ` +
+          `пришлю сюда готовый блок и напишу, что именно поменял.`,
+      }),
+    }).catch(() => {});
+    return;
+  }
+
   await admin.from("profiles").update({
     awaiting_video_id: videoId,
     awaiting_kind: что === "ok" ? "name" : "note",
@@ -554,10 +582,10 @@ async function решениеПоРолику(
   // ничего не нужно — но свой вариант всегда можно прислать текстом.
   const естьВарианты = что === "ok" && варианты.length > 0;
   const текст = что !== "ok"
-    ? `Ролик «${кто}» на доработку.
+    ? `Ролик «${кто}»: расскажите, что хотите.
 
-Напишите следующим сообщением, что не так. ` +
-      `Титры вешать не буду.`
+Напишите следующим сообщением — что не нравится или каким должен быть кадр. ` +
+      `Перепишу промт по-вашему. Титры пока не вешаю.`
     : естьВарианты
     ? `Ролик «${кто}» годится. Выберите заголовок в кадр:
 
