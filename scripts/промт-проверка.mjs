@@ -127,9 +127,13 @@ if (нужное) {
   // «thick dust is the subject» уживаются: запрещена не пыль, а её блеск при
   // красном свете. Спорит только голый запрет: «second insect», «duplicate props».
   const пункты = негатив.split(',').map((п) => п.trim()).filter(Boolean);
-  const голыйЗапрет = (слово) => пункты.some(
-    (п) => п.includes(слово) && п.split(/\s+/).length <= 3,
-  );
+  const голыйЗапрет = (слово) => пункты.some((п) => {
+    if (!п.includes(слово)) return false;
+    if (п.startsWith('only ')) return false;            // «only its shadow» — это разрешение
+    const токены = п.split(/\s+/).filter((т) => !['a', 'an', 'the', 'any', 'no'].includes(т));
+    if (токены.length > 2) return false;                // «a third sack on him» — с оговоркой
+    return !токены.some((т) => /(ing|ed)$/.test(т));    // «sack bursting» — запрещено действие
+  });
   const слова = [...new Set(нужное.match(/[a-z]{4,}/g) ?? [])].filter((с) => !ОБЩИЕ.has(с));
   const конфликт = слова.filter(голыйЗапрет);
   const серьёзные = конфликт.filter((с) => ОПАСНЫЕ.includes(с));
