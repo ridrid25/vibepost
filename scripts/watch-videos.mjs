@@ -821,17 +821,21 @@ async function полосаПоЗаданиям() {
   let задания, полосы;
   try {
     [задания, полосы] = await Promise.all([
-      (await fetch(`${url}/rest/v1/claude_tasks?status=eq.new&select=id,text,user_id&order=created_at&limit=10`,
-        { headers: h })).json(),
-      (await fetch(`${url}/rest/v1/work_progress?done_at=is.null&select=id,note&limit=20`,
-        { headers: h })).json(),
+      // Оба рабочих статуса. Раньше спрашивались только «new», а после
+      // атомарного захвата задача в работе становится «processing» — и
+      // закрыватель гасил полосу ровно тогда, когда работа начиналась.
+      (await fetch(`${url}/rest/v1/claude_tasks?status=in.(new,processing)` +
+        `&select=id,text,user_id,status&order=created_at&limit=20`, { headers: h })).json(),
+      (await fetch(`${url}/rest/v1/work_progress?done_at=is.null` +
+        `&select=id,note,stages,step,updated_at&limit=30`, { headers: h })).json(),
     ]);
   } catch { return; }
   if (!Array.isArray(задания) || !Array.isArray(полосы)) return;
 
-  // Связь задания и полосы держим в note: «задание <id>». Отдельного поля не
-  // заводим — таблица общая, а связь нужна только здесь.
-  const естьПолоса = new Set(полосы.map((п) => (п.note ?? '').replace('задание ', '')));
+  // Связь задания и полосы держим в note: «задание <id>».
+  const естьПолоса = new Set(
+    полосы.map((п) => (п.note ?? '').replace('задание ', '')).filter(Boolean),
+  );
 
   for (const з of задания) {
     if (естьПолоса.has(з.id)) continue;
@@ -847,20 +851,61 @@ async function полосаПоЗаданиям() {
     }).catch(() => {});
   }
 
-  // Задание закрыто — закрываем и полосу.
-  const открытые = new Set(задания.map((з) => з.id));
+  // Задание ушло из работы — закрываем полосу. Чем закончилось, спрашиваем у
+  // самого задания: «failed» нельзя показывать как «готово», иначе в
+  // приложении висит успех там, где на самом деле сбой.
+  const вРаботе = new Set(задания.map((з) => з.id));
   for (const п of полосы) {
-    const кЗаданию = (п.note ?? '').startsWith('задание ');
-    if (!кЗаданию) continue;
-    const idЗадания = (п.note ?? '').replace('задание ', '');
-    if (открытые.has(idЗадания)) continue;
+    const idЗадания = (п.note ?? '').startsWith('задание ')
+      ? (п.note ?? '').replace('задание ', '') : null;
+    if (!idЗадания || вРаботе.has(idЗадания)) continue;
+
+    let итог = 'готово';
+    try {
+      const [задача] = await (await fetch(
+        `${url}/rest/v1/claude_tasks?id=eq.${idЗадания}&select=status,error`, { headers: h },
+      )).json();
+      if (задача?.status === 'failed') {
+        итог = `ошибка: ${String(задача.error ?? 'без пояснения').slice(0, 120)}`;
+      } else if (!задача) {
+        итог = 'задание удалено';
+      }
+    } catch { /* не спросили — считаем, что доведено */ }
+
     await fetch(`${url}/rest/v1/work_progress?id=eq.${п.id}`, {
       method: 'PATCH', headers: h,
       body: JSON.stringify({
-        step: 3, done_at: new Date().toISOString(),
-        outcome: 'готово', updated_at: new Date().toISOString(),
+        // Последний этап берём из самой полосы, а не числом 3: у полос с
+        // другим числом этапов выходило «3 из 4» навсегда.
+        step: Array.isArray(п.stages) ? п.stages.length : п.step,
+        done_at: new Date().toISOString(),
+        outcome: итог,
+        updated_at: new Date().toISOString(),
       }),
     }).catch(() => {});
+  }
+
+  // Страховка для полос без задания: их заводят руками (scripts/ход.mjs), и
+  // закрыть их автоматически некому. Отсюда и брались «идёт 900 минут» —
+  // работа давно кончилась, а строка висела вечно.
+  //
+  // Трогаем ТОЛЬКО дошедшие до последнего этапа и не менявшиеся полчаса.
+  // Незавершённую полосу не закрываем ни при каких условиях: это и есть
+  // настоящее зависание, и прятать его нельзя.
+  const ПОЛЧАСА = 30 * 60 * 1000;
+  for (const п of полосы) {
+    if ((п.note ?? '').startsWith('задание ')) continue;
+    const всего = Array.isArray(п.stages) ? п.stages.length : 0;
+    if (!всего || п.step < всего) continue;
+    if (Date.now() - new Date(п.updated_at).getTime() < ПОЛЧАСА) continue;
+    await fetch(`${url}/rest/v1/work_progress?id=eq.${п.id}`, {
+      method: 'PATCH', headers: h,
+      body: JSON.stringify({
+        done_at: п.updated_at,
+        outcome: 'готово',
+      }),
+    }).catch(() => {});
+    console.log('[полоса] закрыл забытую строку хода работы');
   }
 }
 
