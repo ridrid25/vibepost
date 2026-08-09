@@ -790,6 +790,38 @@ async function разбудитьЕслиЖдут() {
   try {
     if (Date.now() - statSync(следЗапуска).mtimeMs < ЗАЗОР_МС) return;
   } catch { /* следа нет — первый запуск */ }
+
+  // Дежурный может умирать на входе: истёк вход в Claude, упал обход связи.
+  // Тогда будить его бессмысленно — он не доживёт до задания. Раньше приёмник
+  // всё равно дёргал его каждые полминуты: в журнале накопилось 130 подъёмов
+  // подряд, и ни один ничего не сделал.
+  //
+  // Смотрим хвост его журнала: если последняя запись свежая и это отказ входа,
+  // молчим полчаса и один раз говорим Татьяне, что именно поднять.
+  try {
+    const журнал = join(base, '..', 'dezhurny.log');
+    const путь = fileURLToPath(new URL('dezhurny.log', root));
+    if (Date.now() - statSync(путь).mtimeMs < 5 * 60 * 1000) {
+      const хвост = readFileSync(путь, 'utf8').slice(-600);
+      const отказВхода = /Failed to authenticate|OAuth session expired|Request not allowed/.test(хвост);
+      if (отказВхода) {
+        const метка = join(base, 'dezhurny-otkaz.txt');
+        let говорили = 0;
+        try { говорили = statSync(метка).mtimeMs; } catch { /* не говорили */ }
+        if (Date.now() - говорили > 30 * 60 * 1000) {
+          writeFileSync(метка, new Date().toISOString());
+          const обход = /Request not allowed/.test(хвост);
+          await вБота(обход
+            ? 'Не могу работать: связь с Anthropic закрыта. Поднимите v2rayN и включите TUN — ' +
+              'без него мои запросы отбиваются, и промт написать нечем.'
+            : 'Не могу работать: истёк вход в Claude на компьютере. Откройте окно Claude ' +
+              'и войдите заново — задания копятся, но взять их некому.');
+          console.log('[будильник] дежурный не заводится, сказал Татьяне');
+        }
+        return;
+      }
+    }
+  } catch { /* журнала нет — значит и отказов не было */ }
   writeFileSync(следЗапуска, new Date().toISOString());
 
   const пускач = fileURLToPath(new URL('Дежурный.vbs', root));
