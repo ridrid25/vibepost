@@ -554,9 +554,10 @@ async function решениеПоРолику(
       text: `Ролик «${кто}»: переписать промт самому. Своих пожеланий у Татьяны нет — ` +
         `разбери замер по секундам, найди провал и почини его.`,
     });
-    await admin.from("incoming_videos")
-      .update({ status: "rework", rework_at: new Date().toISOString(),
-                rework_ack_at: new Date().toISOString() }).eq("id", videoId);
+    // Ролик НЕ помечаем доделкой. Задание с внятным текстом уже создано выше,
+    // а пометка без пояснения — пустая строка «ДОДЕЛКА … <ничего>» в списке:
+    // отличить её от случайного нажатия невозможно, и она висит, топя под собой
+    // настоящие замечания. Одно действие — одна запись.
     await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ callback_query_id: cq.id, text: "Переписываю" }),
