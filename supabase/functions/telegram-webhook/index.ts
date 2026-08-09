@@ -123,10 +123,18 @@ async function handleCommand(
         status: "rework", rework_note: текст, rework_at: сейчас, rework_ack_at: сейчас,
       }).eq("id", profile.awaiting_video_id);
       await admin.from("claude_tasks").insert({
-        user_id: profile.id, text: текст, video_id: profile.awaiting_video_id,
+        user_id: profile.id, video_id: profile.awaiting_video_id,
+        text: ждём === "sound"
+          ? `ПРАВКА ЗВУКА, промт не переписывать. ${текст}. Порядок — ` +
+            `docs/07_ПРАВИЛА.md, «Брак в звуке чинится звуком»: распознать по ` +
+            `словам, найти донора в прошлом дубле, пересадить, вернуть роликом в бота.`
+          : текст,
       });
-      ответ = `Записал замечание к ролику «${ролик?.tag ?? ролик?.name}». ` +
-        `Титры не вешаю, перепишу промт.`;
+      ответ = ждём === "sound"
+        ? `Записал: «${текст.slice(0, 80)}». Чиню звук донором из прошлого дубля — ` +
+          `картинку не трогаю, промт не переписываю. Пришлю готовый ролик сюда.`
+        : `Записал замечание к ролику «${ролик?.tag ?? ролик?.name}». ` +
+          `Титры не вешаю, перепишу промт.`;
     }
     await admin.from("profiles")
       .update({ awaiting_video_id: null, awaiting_kind: null, awaiting_task: false })
@@ -544,6 +552,35 @@ async function решениеПоРолику(
     return;
   }
 
+  // «🔊 Поправь звук» — беда в озвучке, а не в картинке.
+  //
+  // Раньше выбор был только «годится» или «не годится», и второе всегда
+  // означало новый промт. Но чаще всего испорчено одно слово или ударение:
+  // у лобстера вместо «крепкий» звучало «креп». Переснимать ради этого —
+  // сжечь генерацию и потерять картинку, которая уже понравилась.
+  if (что === "snd") {
+    await admin.from("profiles").update({
+      awaiting_video_id: videoId, awaiting_kind: "sound", awaiting_task: false,
+    }).eq("id", profile.id);
+    await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: cq.id }),
+    }).catch(() => {});
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: cq.message?.chat.id ?? cq.from.id,
+        text: `Ролик «${кто}»: что не так со звуком?
+
+` +
+          `Напишите следующим сообщением — какое слово проглочено или где ` +
+          `неверное ударение. Промт переписывать не буду: возьму это слово из ` +
+          `прошлого дубля и пересажу, картинку не трону.`,
+      }),
+    }).catch(() => {});
+    return;
+  }
+
   // «🔁 Переписывай сам» — Татьяне нечего добавить, промт целиком на Claude.
   // Отдельная кнопка нужна затем, что раньше выбор был из двух: либо принять
   // плохой ролик, либо печатать замечание. Молчание при этом ничего не
@@ -594,10 +631,22 @@ async function решениеПоРолику(
       варианты.map((h, i) => `${i + 1}. ${h.toUpperCase()}`).join("\n") +
       `
 
-Не нравится ни один — пришлите свой текстом.`
-    : `Ролик «${кто}» годится.
+Не нравится ни один — жмите «Другие пять» или пришлите свой текстом.`
+    // Готовых вариантов нет — придумываем прямо сейчас, а не просим её печатать.
+    // Заголовок придумывает Claude, Татьяна только выбирает: это её правило, и
+    // 9 августа бот его нарушил именно здесь.
+    : `Ролик «${кто}» годится. Придумываю пять заголовков, пришлю через минуту.`;
 
-Пришлите заголовок следующим сообщением.`;
+  if (что === "ok" && !естьВарианты) {
+    fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/hook-options`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ video_id: videoId }),
+    }).catch(() => {});
+  }
 
   await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
     method: "POST", headers: { "Content-Type": "application/json" },
