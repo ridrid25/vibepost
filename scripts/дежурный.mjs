@@ -9,7 +9,7 @@
  * а здесь текст читается как UTF-8 и передаётся Claude без искажений.
  */
 import { spawn, execFileSync } from 'node:child_process';
-import { openSync } from 'node:fs';
+import { openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -81,6 +81,31 @@ const ЗАДАНИЕ = `Ты дежурный по проекту VibePost. Та
 const [бинарь, префикс] = process.platform === 'win32'
   ? ['cmd.exe', ['/c', 'claude']]
   : ['claude', []];
+
+/**
+ * Замок живого дежурного.
+ *
+ * Приёмник теперь будит дежурного сразу, как приходит задание, — без пауз.
+ * Значит лавину надо держать не временем, а фактом: пока один дежурный жив,
+ * второго не поднимать. Пауза в 20 минут, стоявшая раньше, защищала от лавины
+ * ценой того, что задание Татьяны лежало эти 20 минут.
+ *
+ * Замок пишет сам дежурный и своим номером процесса — только он его знает.
+ * Приёмник запускает через wscript, и номер того запуска ничей: именно на этом
+ * 8 августа замок сломался и приёмник поднял Claude 6984 раза за ночь.
+ */
+const замок = join(корень, 'dezhurny.pid');
+try {
+  process.kill(Number(readFileSync(замок, 'utf8')), 0);
+  console.log('[замок] дежурный уже работает, второго не поднимаю');
+  process.exit(0);
+} catch { /* замка нет либо процесс из него давно умер */ }
+writeFileSync(замок, String(process.pid));
+const снятьЗамок = () => { try { rmSync(замок, { force: true }); } catch { /* уже нет */ } };
+process.on('exit', снятьЗамок);
+for (const сигнал of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.on(сигнал, () => { снятьЗамок(); process.exit(0); });
+}
 
 /**
  * Проверка обхода перед запуском.

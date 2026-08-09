@@ -25,3 +25,5 @@ dezhurny.log
 dezhurny.lock
 .delo-komar
 .дело-комар
+dezhurny.pid
+dezhurny-last.txt
