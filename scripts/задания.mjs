@@ -144,8 +144,15 @@ if (команда === 'список') {
   // бессмысленно: открыть его она сможет только сев за компьютер.
   const { readFileSync: читать, statSync } = await import('node:fs');
   const { basename } = await import('node:path');
-  const [файл, ...подпись] = аргументы;
+  const [файл, ...остальное] = аргументы;
   if (!файл) throw new Error('нужен путь к ролику');
+  // Если среди аргументов есть id ролика — под видео появятся те же кнопки,
+  // что и под карточкой замера. Без них Татьяне некуда нажать: присланный
+  // мной готовый файл оказывался тупиком, и ей приходилось искать старую
+  // карточку выше по переписке.
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const idРолика = остальное.find((a) => uuid.test(a)) ?? null;
+  const подпись = остальное.filter((a) => a !== idРолика);
   const размер = statSync(файл).size;
   if (размер > 50 * 1024 * 1024) {
     throw new Error(`ролик ${(размер / 1048576).toFixed(1)} МБ — бот отдаёт до 50 МБ`);
@@ -164,6 +171,15 @@ if (команда === 'список') {
   форма.append('chat_id', String(p.error_notify_tg_id));
   форма.append('caption', подпись.join(' ').trim().slice(0, 1024));
   форма.append('supports_streaming', 'true');
+  if (idРолика) {
+    форма.append('reply_markup', JSON.stringify({
+      inline_keyboard: [
+        [{ text: '✅ Годится', callback_data: `vid:ok:${idРолика}` }],
+        [{ text: '🔊 Поправь звук', callback_data: `vid:snd:${idРолика}` }],
+        [{ text: '✏️ Не годится', callback_data: `vid:no:${idРолика}` }],
+      ],
+    }));
+  }
   форма.append('video', new Blob([читать(файл)], { type: 'video/mp4' }), basename(файл));
 
   const r = await (await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
@@ -216,5 +232,5 @@ if (команда === 'список') {
   await бот(блок, 'HTML');
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
-  console.log('команды: список | взять [кто] | ролик <файл> \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
+  console.log('команды: список | взять [кто] | ролик <файл> [id-ролика] \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
 }
