@@ -64,7 +64,7 @@ if (команда === 'список') {
   } catch { /* отметка не критична — список важнее */ }
 
   const t = await (await fetch(
-    `${url}/rest/v1/claude_tasks?status=eq.new` +
+    `${url}/rest/v1/claude_tasks?status=in.(new,processing)` +
     `&select=id,text,created_at,video_id,incoming_videos(name,measure_avg,measure_worst,video_url)` +
     `&order=created_at`, { headers: h })).json();
   // Ролики, возвращённые кнопкой «↩︎ На доделку», — такое же задание, только
@@ -102,6 +102,35 @@ if (команда === 'список') {
         v.rework_note ?? 'без пояснения'].join('	'));
     }
   }
+} else if (команда === 'взять') {
+  // Атомарный захват. Раньше дежурные просто читали список, и когда их
+  // оказывалось двое — планировщик поднял одного, приёмник другого, — они
+  // брали одно и то же задание и писали два промта на один ролик.
+  const r = await fetch(`${url}/rest/v1/rpc/claim_task`, {
+    method: 'POST', headers: h,
+    body: JSON.stringify({ p_worker: аргументы[0] || 'дежурный' }),
+  });
+  const задача = r.ok ? await r.json() : null;
+  if (!задача?.id) {
+    console.log('НЕТ СВОБОДНЫХ ЗАДАНИЙ');
+  } else {
+    console.log(`${задача.id}\t${задача.text}`);
+  }
+
+} else if (команда === 'сбой') {
+  // Упавшую задачу нельзя закрывать как выполненную: 9 августа промты писались,
+  // падали на отправке и всё равно уходили в «done» — работа пропадала молча.
+  const [id, ...причина] = аргументы;
+  if (!id) throw new Error('нужен id задания');
+  await fetch(`${url}/rest/v1/claude_tasks?id=eq.${id}`, {
+    method: 'PATCH', headers: h,
+    body: JSON.stringify({
+      status: 'failed', done_at: new Date().toISOString(),
+      error: причина.join(' ').slice(0, 500) || 'без пояснения',
+    }),
+  });
+  console.log('помечено сбоем — сторож увидит');
+
 } else if (команда === 'готово') {
   const id = аргументы[0];
   if (!id) throw new Error('нужен id задания');
@@ -162,5 +191,5 @@ if (команда === 'список') {
   await бот(блок, 'HTML');
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
-  console.log('команды: список | готово <id> | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
+  console.log('команды: список | взять [кто] | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
 }
