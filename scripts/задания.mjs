@@ -9,7 +9,7 @@
  *   node scripts/задания.mjs доделано <id>   — ролик переделан, вернуть во «Входящие»
  *   node scripts/задания.mjs сказать "текст" — написать Татьяне в бота
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 
 const env = {};
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split(/\r?\n/)) {
@@ -55,32 +55,23 @@ function мск(iso) {
 }
 
 if (команда === 'список') {
-  // Отметка «окно Claude открыто и работает». Эту команду вызывает хук на
-  // каждом сообщении Татьяны, так что свежесть файла = живой разговор.
-  // Приёмник по ней понимает, что поднимать дежурного не надо: иначе два
-  // Claude возьмутся за одно задание.
-  try {
-    writeFileSync(new URL('../claude-alive.txt', import.meta.url), new Date().toISOString());
-  } catch { /* отметка не критична — список важнее */ }
-
   const t = await (await fetch(
     `${url}/rest/v1/claude_tasks?status=in.(new,processing)` +
     `&select=id,text,created_at,video_id,incoming_videos(name,measure_avg,measure_worst,video_url)` +
     `&order=created_at`, { headers: h })).json();
   // Ролики, возвращённые кнопкой «↩︎ На доделку», — такое же задание, только
   // пришло из приложения, а не из бота. Разбираются в том же проходе.
-  // Замечание, на которое уже ответили и по которому ролик уже обработан,
-  // в списке не показываем. Иначе оно висит вечно: доделка от 2 августа
-  // «почему нет замеров и титров?» разобрана 3-го, а мозолила глаза 7-го и
-  // топила под собой свежие задания. Пометку во «Входящих» при этом не
-  // трогаем — снять её может только Татьяна.
   const все = await (await fetch(
     `${url}/rest/v1/incoming_videos?status=eq.rework` +
     `&select=id,name,rework_note,rework_at,rework_ack_at,polished_at&order=rework_at`,
     { headers: h })).json();
+  // Разобранная доделка уходит из списка по одному признаку: на неё ответили
+  // (rework_ack_at свежее rework_at). Раньше требовались ещё и титры — но по
+  // доделке «переделай промт» титров не будет никогда: Татьяна снимет НОВЫЙ
+  // ролик. Замечание про лобстера так и висело бы вечно, топя под собой всё
+  // свежее. Пометку во «Входящих» при этом не трогаем: снять её может только она.
   const r = все.filter((v) => !(
-    v.rework_ack_at && v.polished_at &&
-    new Date(v.rework_ack_at) > new Date(v.rework_at)
+    v.rework_ack_at && new Date(v.rework_ack_at) > new Date(v.rework_at)
   ));
 
   if (!t.length && !r.length) {
