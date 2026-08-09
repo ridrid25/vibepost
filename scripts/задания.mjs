@@ -138,6 +138,40 @@ if (команда === 'список') {
     body: JSON.stringify({ status: 'new', rework_note: null, rework_at: null }),
   });
   console.log('ролик возвращён во «Входящие»');
+} else if (команда === 'ролик') {
+  // Готовый файл обратно в бота. Починенный звук, титры, любой результат —
+  // Татьяна работает с телефона, и присылать ей путь к файлу на компьютере
+  // бессмысленно: открыть его она сможет только сев за компьютер.
+  const { readFileSync: читать, statSync } = await import('node:fs');
+  const { basename } = await import('node:path');
+  const [файл, ...подпись] = аргументы;
+  if (!файл) throw new Error('нужен путь к ролику');
+  const размер = statSync(файл).size;
+  if (размер > 50 * 1024 * 1024) {
+    throw new Error(`ролик ${(размер / 1048576).toFixed(1)} МБ — бот отдаёт до 50 МБ`);
+  }
+
+  const [p] = await (await fetch(
+    `${url}/rest/v1/profiles?error_notify_tg_id=not.is.null` +
+    `&select=error_notify_tg_id,error_notify_bot_id&limit=1`, { headers: h })).json();
+  const [b] = await (await fetch(
+    `${url}/rest/v1/bots?id=eq.${p.error_notify_bot_id}&select=token_secret_id`, { headers: h })).json();
+  const token = await (await fetch(`${url}/rest/v1/rpc/get_bot_token`, {
+    method: 'POST', headers: h, body: JSON.stringify({ p_secret_id: b.token_secret_id }),
+  })).json();
+
+  const форма = new FormData();
+  форма.append('chat_id', String(p.error_notify_tg_id));
+  форма.append('caption', подпись.join(' ').trim().slice(0, 1024));
+  форма.append('supports_streaming', 'true');
+  форма.append('video', new Blob([читать(файл)], { type: 'video/mp4' }), basename(файл));
+
+  const r = await (await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+    method: 'POST', body: форма,
+  })).json();
+  if (!r.ok) throw new Error(r.description);
+  console.log(`ролик отправлен, ${(размер / 1048576).toFixed(1)} МБ`);
+
 } else if (команда === 'сказать') {
   const текст = аргументы.join(' ').trim();
   if (!текст) throw new Error('нечего говорить');
@@ -182,5 +216,5 @@ if (команда === 'список') {
   await бот(блок, 'HTML');
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
-  console.log('команды: список | взять [кто] | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
+  console.log('команды: список | взять [кто] | ролик <файл> \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
 }
