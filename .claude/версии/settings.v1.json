@@ -1,0 +1,41 @@
+{
+  "_комментарий": "Список заданий подставляется сам перед каждым сообщением Татьяны. Полагаться на память Claude оказалось нельзя: 4 августа он дважды ответил, не заглянув в список, и потерял замечание про ролик со скатом.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"scripts/задания.mjs\" список",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"scripts/стоп-хук.mjs\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  },
+  "_разрешения": "Дежурный работает без окна, и нажать «разрешить» ему некому. Без этих строк он пишет промт и молча умирает на отправке: 8 августа так пропали промты комара и нарвала, а Татьяна 28 минут ждала ответа, который никто не мог отправить.",
+  "permissions": {
+    "allow": [
+      "Bash(node scripts/задания.mjs:*)",
+      "Bash(node scripts/промт-проверка.mjs:*)",
+      "Bash(node scripts/ход.mjs:*)",
+      "Bash(node scripts/проверка.mjs)",
+      "Bash(node scripts/самопроверка.mjs)",
+      "Bash(node --check scripts/*)",
+      "Read(//c/Users/rid-s/Downloads/Обучение/CLAUD/**)",
+      "Write(//c/Users/rid-s/Downloads/Обучение/CLAUD/Генерация роликов/prompts/**)",
+      "Edit(//c/Users/rid-s/Downloads/Обучение/CLAUD/Генерация роликов/prompts/**)"
+    ]
+  }
+}

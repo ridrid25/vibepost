@@ -34,7 +34,6 @@
       "Bash(node scripts/самопроверка.mjs)",
       "Bash(node --check scripts/*)",
       "Read(//c/Users/rid-s/Downloads/Обучение/CLAUD/**)",
-      "Write(//c/Users/rid-s/Downloads/Обучение/CLAUD/Генерация роликов/prompts/**)",
       "Edit(//c/Users/rid-s/Downloads/Обучение/CLAUD/Генерация роликов/prompts/**)"
     ]
   }

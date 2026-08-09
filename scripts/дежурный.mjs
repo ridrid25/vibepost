@@ -8,7 +8,7 @@
  * Отдельный файл, а не .cmd: в cmd-файлах кириллица на Windows ломается,
  * а здесь текст читается как UTF-8 и передаётся Claude без искажений.
  */
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { openSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -57,6 +57,43 @@ const ЗАДАНИЕ = `Ты дежурный по проекту VibePost. Та
 const [бинарь, префикс] = process.platform === 'win32'
   ? ['cmd.exe', ['/c', 'claude']]
   : ['claude', []];
+
+/**
+ * Проверка обхода перед запуском.
+ *
+ * Доступ к Anthropic из России идёт через TUN-адаптер xray. Когда он опущен,
+ * API отвечает «403 Request not allowed» — мгновенно и всем. Ретраи тут
+ * бесполезны: 9 августа в журнале накопилось 297 таких отказов подряд, и все
+ * одиннадцать часов никто об этом не узнал.
+ *
+ * Поэтому: не поднимать сессию вслепую. Нет обхода — сказать Татьяне словами,
+ * что именно поднять, и не тратить запуск.
+ */
+const ПРОВЕРКА_TUN = [
+  'powershell', '-NoProfile', '-Command',
+  '(Get-NetAdapter | Where-Object { $_.Name -like "*tun*" -and $_.Status -eq "Up" } | Measure-Object).Count',
+];
+
+function обходПоднят() {
+  try {
+    const вывод = execFileSync(ПРОВЕРКА_TUN[0], ПРОВЕРКА_TUN.slice(1),
+      { encoding: 'utf8', timeout: 20000 }).trim();
+    return вывод !== '0';
+  } catch {
+    return true;   // проверить не смогли — не мешаем работать
+  }
+}
+
+if (!обходПоднят()) {
+  const беда = 'Не могу работать: связь с Anthropic закрыта. Поднят ли v2rayN и включён ли режим TUN? '
+    + 'Без него любой мой запуск отбивается ошибкой 403, и промт написать нечем.';
+  console.log('[обход опущен] ' + беда);
+  try {
+    execFileSync('node', [join(корень, 'scripts', 'задания.mjs'), 'сказать', беда],
+      { cwd: корень, timeout: 30000 });
+  } catch { /* без связи не поможешь */ }
+  process.exit(0);
+}
 
 const журнал = openSync(join(корень, 'dezhurny.log'), 'a');
 
