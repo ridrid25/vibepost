@@ -27,3 +27,7 @@ dezhurny.lock
 .дело-комар
 dezhurny.pid
 dezhurny-last.txt
+
+# Токены ботов для сверки — никогда не коммитить
+токены.local.txt
+*.local.txt
