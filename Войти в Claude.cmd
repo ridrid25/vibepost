@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 title Вход в Claude
-cd /d "%~dp0"
+cd /d "%USERPROFILE%\Downloads\Обучение\CLAUD\Отложенный постинг (рассылка) в ТГ"
 echo.
 echo   ВХОД В CLAUDE
 echo.
