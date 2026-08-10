@@ -10,6 +10,7 @@ import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 let cachedSecret: string | null = null;
 
 const MSK_OFFSET_MS = 3 * 60 * 60 * 1000;
+const СТРОКА = String.fromCharCode(10);
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -86,6 +87,7 @@ async function handleCommand(
     if (raw.includes("статус")) cmd = "/status";
     else if (raw.includes("очередь")) cmd = "/queue";
     else if (raw.includes("сводка")) cmd = "/today";
+    else if (raw.includes("как дела")) cmd = "/health";
     else if (raw.includes("сломалось") || raw.includes("sos")) cmd = "/sos";
     else if (raw.includes("идеи")) cmd = "/ideas";
     else if (raw.includes("дайджест")) cmd = "/digest";
@@ -400,6 +402,52 @@ async function handleCommand(
         ? `\n\nУже ждут (${ждут.length}):\n` +
           ждут.map((t) => `• ${t.text.slice(0, 70)}`).join("\n")
         : "");
+  } else if (cmd === "/health") {
+    // Отвечает на вопрос «почему не работает» фактами из базы, без гадания.
+    // Причину падения кладёт сюда приёмник в момент сбоя: журнал живёт на
+    // компьютере Татьяны, а бот в облаке и до журнала не дотягивается.
+    const { data: очередь } = await admin
+      .from("claude_tasks").select("created_at")
+      .eq("user_id", uid).in("status", ["new", "processing"])
+      .order("created_at").limit(1);
+    const { count: ждут } = await admin
+      .from("claude_tasks").select("id", { count: "exact", head: true })
+      .eq("user_id", uid).in("status", ["new", "processing"]);
+    const { data: последнее } = await admin
+      .from("claude_tasks").select("done_at")
+      .eq("user_id", uid).eq("status", "done")
+      .order("done_at", { ascending: false }).limit(1).maybeSingle();
+    const { data: здоровье } = await admin
+      .from("worker_health").select("reason, detail, happened_at")
+      .eq("id", 1).maybeSingle();
+
+    const мин = (iso: string | null) =>
+      iso ? Math.round((Date.now() - new Date(iso).getTime()) / 60000) : null;
+    const ждётМин = мин(очередь?.[0]?.created_at ?? null);
+    const отвечалМин = мин(последнее?.done_at ?? null);
+
+    const строки: string[] = [];
+    строки.push(ждут ? `В очереди: ${ждут}, старшее ждёт ${ждётМин} мин.` : "В очереди пусто.");
+    строки.push(отвечалМин === null
+      ? "Дежурный ещё ни разу не отвечал."
+      : `Дежурный отвечал ${отвечалМин} мин назад.`);
+
+    const болен = здоровье?.reason && здоровье.reason !== "ok";
+    if (болен) {
+      строки.push("");
+      строки.push(`⚠️ ${здоровье.detail}`);
+      строки.push(здоровье.reason === "vpn"
+        ? "Поднимите v2rayN и включите TUN."
+        : "Подойдите к компьютеру и нажмите «Войти в Claude» на рабочем столе.");
+    } else if ((ждут ?? 0) > 0 && (ждётМин ?? 0) > 20) {
+      строки.push("");
+      строки.push("⚠️ Задание висит дольше обычного, а причина неизвестна. " +
+        "Проверьте, включён ли компьютер.");
+    } else {
+      строки.push("");
+      строки.push("✅ Всё работает.");
+    }
+    reply = "🩺 Как дела" + СТРОКА + СТРОКА + строки.join(СТРОКА);
   } else if (cmd === "/sos" || cmd === "/help") {
     reply = "🛠 Ремонтная памятка VibePost\n\n" +
       "1️⃣ Пришла ошибка отправки с причиной — почти всегда чинится за " +
@@ -458,7 +506,7 @@ async function handleCommand(
         keyboard: [
           [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
           [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
-          [{ text: "🛠 Если сломалось" }],
+          [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
         ],
         resize_keyboard: true,
         is_persistent: true,

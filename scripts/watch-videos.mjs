@@ -808,9 +808,23 @@ async function разбудитьЕслиЖдут() {
         const метка = join(base, 'dezhurny-otkaz.txt');
         let говорили = 0;
         try { говорили = statSync(метка).mtimeMs; } catch { /* не говорили */ }
+        const обход = /Request not allowed/.test(хвост);
+        // Причину кладём в базу СРАЗУ, а не раз в полчаса: бот должен уметь
+        // ответить «истёк вход» в любую минуту, а не только после тревоги.
+        fetch(`${url}/rest/v1/worker_health?id=eq.1`, {
+          method: 'PATCH',
+          headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`,
+                     'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            reason: обход ? 'vpn' : 'auth',
+            detail: обход
+              ? 'связь с Anthropic закрыта, нужен v2rayN с TUN'
+              : 'истёк вход в Claude, нужен файл «Войти в Claude» на рабочем столе',
+            happened_at: new Date().toISOString(),
+          }),
+        }).catch(() => {});
         if (Date.now() - говорили > 30 * 60 * 1000) {
           writeFileSync(метка, new Date().toISOString());
-          const обход = /Request not allowed/.test(хвост);
           await вБота(обход
             ? 'Не могу работать: связь с Anthropic закрыта. Поднимите v2rayN и включите TUN — ' +
               'без него мои запросы отбиваются, и промт написать нечем.'
@@ -823,6 +837,13 @@ async function разбудитьЕслиЖдут() {
     }
   } catch { /* журнала нет — значит и отказов не было */ }
   writeFileSync(следЗапуска, new Date().toISOString());
+  // Раз дошли сюда — отказов в журнале нет, значит здоров.
+  fetch(`${url}/rest/v1/worker_health?id=eq.1`, {
+    method: 'PATCH',
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`,
+               'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: 'ok', detail: null, happened_at: new Date().toISOString() }),
+  }).catch(() => {});
 
   const пускач = fileURLToPath(new URL('Дежурный.vbs', root));
   const дитя = spawn('wscript.exe', ['//B', '//Nologo', пускач], {
