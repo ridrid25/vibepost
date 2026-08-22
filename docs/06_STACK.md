@@ -2,7 +2,7 @@
 
 Что и где работает. Claude правит этот файл сам, как только что-то меняется.
 
-Обновлено: 31.07.2026
+Обновлено: 22.08.2026
 
 ---
 
@@ -11,10 +11,10 @@
 | Слой | Чем |
 |---|---|
 | База, хранилище, авторизация | Supabase, облако, ref `rjtyjybwygfkdekdzqbm`, тариф Free |
-| Серверная логика | Supabase Edge Functions, Deno + TypeScript, 19 функций |
-| Расписание | pg_cron + pg_net, 9 заданий |
+| Серверная логика | Supabase Edge Functions, Deno + TypeScript, 29 активных функций |
+| Расписание | pg_cron + pg_net, 17 активных заданий |
 | Секреты | Supabase Vault и Edge Function Secrets |
-| Публикация функций | `node scripts/deploy.mjs` через Management API |
+| Публикация функций | Простые single-file: `node scripts/deploy.mjs`; функции с `_shared`: Supabase CLI `functions deploy --use-api` |
 | Интерфейс | Lovable, React + TypeScript + Tailwind + shadcn/ui |
 | Боевой адрес | https://chrono-vibepost.lovable.app |
 | Мессенджер | Telegram Bot API, бот @VibePostTG_bot |
@@ -27,11 +27,13 @@
 
 | Слой | Чем |
 |---|---|
-| Идеи и промты | Gemini 2.5 Flash через Vertex AI |
+| Промты роликов | Claude локально; бригада ролей только по правилам проекта |
 | Видео, платно | Veo `veo-3.1-lite-generate-001`, около 0,40 $ за 8 секунд |
-| Видео, бесплатно | Приложение Gemini, вручную, по подписке Google AI Pro |
+| Видео, основной ручной путь | Приложения Gemini/Flow, вручную |
 | Озвучка | Edge TTS (msedge-tts), голос `ru-RU-DmitryNeural`, бесплатно |
 | Обработка видео | ffmpeg на компьютере Татьяны |
+| TikTok-аналитика | Display API → Supabase → Content Brigade Learning Engine |
+| Wan/LTX | Отдельный сохранённый эксперимент; автоматически не подключён |
 | Код | GitHub, приватный `ridrid25/vibepost-video` |
 | Папка на диске | `C:\Users\rid-s\Downloads\Обучение\CLAUD\Генерация роликов` |
 
@@ -39,9 +41,9 @@
 
 | Что | Как |
 |---|---|
-| Аккаунт | `t9183033323@gmail.com` |
-| Проект | `gen-lang-client-0434343773`, оплата подключена, Tier 1 |
-| Способ доступа | Служебный аккаунт `vibepost-veo@…`, роль Agent Platform User |
+| Аккаунт | Хранится в настройках Google, не дублируется в документации |
+| Проект | Google Cloud project с подключённой оплатой, Tier 1 |
+| Способ доступа | Служебный аккаунт с ролью Agent Platform User |
 | Ключ | JSON в Vault под именем `google_sa_json` |
 
 **Почему служебный аккаунт, а не ключ API:** Google выдаёт этому аккаунту ключи

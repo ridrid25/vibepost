@@ -30,7 +30,21 @@ if (!token || !ref) {
   process.exit(1);
 }
 
-const БЕЗ_ПРОВЕРКИ_КЛЮЧА = new Set(['telegram-webhook', 'ingest-video']);
+const БЕЗ_ПРОВЕРКИ_КЛЮЧА = new Set([
+  'telegram-webhook',
+  'ingest-video',
+  'tiktok-oauth-callback',
+  'content-brigade',
+]);
+// This legacy helper uploads a single index.ts only. Functions importing a
+// shared module must be bundled by the official CLI, which also reads the
+// checked-in verify_jwt policy from supabase/config.toml.
+const ТОЛЬКО_SUPABASE_CLI = new Set([
+  'tiktok-oauth-start',
+  'tiktok-oauth-callback',
+  'tiktok-sync',
+  'tiktok-disconnect',
+]);
 const dir = new URL('supabase/functions/', root);
 const базовый = decodeURIComponent(dir.pathname.replace(/^\//, ''));
 
@@ -48,6 +62,11 @@ if (!имена.length) {
 
 let ошибок = 0;
 for (const имя of имена) {
+  if (ТОЛЬКО_SUPABASE_CLI.has(имя)) {
+    console.log(`${имя}: используйте supabase functions deploy ${имя} --use-api (есть общий модуль _shared)`);
+    ошибок++;
+    continue;
+  }
   const файл = join(базовый, имя, 'index.ts');
   if (!existsSync(файл)) {
     console.log(`${имя}: файла нет, пропускаю`);

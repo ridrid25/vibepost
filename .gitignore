@@ -10,6 +10,7 @@ node_modules/
 .supabase/
 supabase/.temp/
 dist/
+.tmp-*/
 
 # Windows
 Thumbs.db

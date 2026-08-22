@@ -1,0 +1,22 @@
+[functions.telegram-webhook]
+verify_jwt = false
+
+[functions.ingest-video]
+verify_jwt = false
+
+# TikTok redirects the browser here and cannot attach a Supabase JWT. Security
+# is provided by a short-lived, one-time, hashed OAuth state.
+[functions.tiktok-oauth-callback]
+verify_jwt = false
+
+[functions.tiktok-oauth-start]
+verify_jwt = true
+
+[functions.tiktok-sync]
+verify_jwt = true
+
+[functions.tiktok-disconnect]
+verify_jwt = true
+
+[functions.content-brigade]
+verify_jwt = false
