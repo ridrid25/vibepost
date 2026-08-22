@@ -32,6 +32,7 @@ import { join, extname, basename, dirname } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { pathToFileURL, fileURLToPath } from 'node:url';
+import { причинаОстановкиClaude } from './lib/claude-availability.mjs';
 
 const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm', '.m4v']);
 const POLL_MS = 5000;
@@ -766,6 +767,53 @@ const ждутНазвания = new Set();
 const ЗАЗОР_МС = 30 * 1000;
 const замокДежурного = join(base, 'dezhurny.pid');
 const следЗапуска = join(base, 'dezhurny-last.txt');
+const паузаДежурного = join(base, 'dezhurny-pause.json');
+
+function прочитатьПаузуДежурного() {
+  try {
+    const пауза = JSON.parse(readFileSync(паузаДежурного, 'utf8'));
+    if (пауза?.until && new Date(пауза.until).getTime() > Date.now()) return пауза;
+    rmSync(паузаДежурного, { force: true });
+  } catch { /* паузы нет либо файл уже устарел */ }
+  return null;
+}
+
+function записатьПаузуДежурного(остановка) {
+  if (!остановка.until) return;
+  writeFileSync(паузаДежурного, JSON.stringify({
+    reason: остановка.reason,
+    detail: остановка.detail,
+    progress: остановка.progress,
+    until: остановка.until,
+  }, null, 2));
+}
+
+async function полосыОжидаютClaude(подпись = null) {
+  const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`,
+              'Content-Type': 'application/json' };
+  let полосы;
+  try {
+    полосы = await (await fetch(
+      `${url}/rest/v1/work_progress?done_at=is.null&select=id,note,stages,step`,
+      { headers: h },
+    )).json();
+  } catch { return; }
+  if (!Array.isArray(полосы)) return;
+
+  for (const полоса of полосы.filter((п) => (п.note ?? '').startsWith('задание '))) {
+    const ждётСейчас = Array.isArray(полоса.stages) &&
+      String(полоса.stages[1] ?? '').startsWith('ждёт Claude');
+    const stages = подпись
+      ? ['задание принято', подпись, 'пишу промпт', 'отправлен вам']
+      : ['задание принято', 'пишу промпт', 'отправлен вам'];
+    if ((подпись && ждётСейчас && полоса.stages[1] === подпись) ||
+        (!подпись && !ждётСейчас)) continue;
+    await fetch(`${url}/rest/v1/work_progress?id=eq.${полоса.id}`, {
+      method: 'PATCH', headers: h,
+      body: JSON.stringify({ stages, step: 1, updated_at: new Date().toISOString() }),
+    }).catch(() => {});
+  }
+}
 
 async function разбудитьЕслиЖдут() {
   if (!url || !serviceKey) return;
@@ -779,6 +827,14 @@ async function разбудитьЕслиЖдут() {
     return;
   }
   if (!Array.isArray(ждут) || !ждут.length) return;
+
+  // Лимит Claude — не поломка и не повод запускать его каждые пять минут.
+  // Оставляем задание в очереди и ждём времени сброса, которое сообщил CLI.
+  const пауза = прочитатьПаузуДежурного();
+  if (пауза) {
+    await полосыОжидаютClaude(пауза.progress ?? 'ждёт Claude');
+    return;
+  }
 
   // Дежурный жив — второго не надо. Проверяем по настоящему номеру процесса,
   // который он записал сам.
@@ -803,39 +859,37 @@ async function разбудитьЕслиЖдут() {
     const путь = fileURLToPath(new URL('dezhurny.log', root));
     if (Date.now() - statSync(путь).mtimeMs < 5 * 60 * 1000) {
       const хвост = readFileSync(путь, 'utf8').slice(-600);
-      const отказВхода = /Failed to authenticate|OAuth session expired|Request not allowed/.test(хвост);
-      if (отказВхода) {
+      const остановка = причинаОстановкиClaude(хвост);
+      if (остановка) {
         const метка = join(base, 'dezhurny-otkaz.txt');
         let говорили = 0;
         try { говорили = statSync(метка).mtimeMs; } catch { /* не говорили */ }
-        const обход = /Request not allowed/.test(хвост);
+        if (остановка.reason === 'limit') записатьПаузуДежурного(остановка);
+        await полосыОжидаютClaude(остановка.progress);
         // Причину кладём в базу СРАЗУ, а не раз в полчаса: бот должен уметь
-        // ответить «истёк вход» в любую минуту, а не только после тревоги.
+        // ответить правдиво в любую минуту, а не только после тревоги.
         fetch(`${url}/rest/v1/worker_health?id=eq.1`, {
           method: 'PATCH',
           headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`,
                      'Content-Type': 'application/json' },
           body: JSON.stringify({
-            reason: обход ? 'vpn' : 'auth',
-            detail: обход
-              ? 'связь с Anthropic закрыта, нужен v2rayN с TUN'
-              : 'истёк вход в Claude, нужен файл «Войти в Claude» на рабочем столе',
+            reason: остановка.reason,
+            detail: остановка.detail,
             happened_at: new Date().toISOString(),
           }),
         }).catch(() => {});
         if (Date.now() - говорили > 30 * 60 * 1000) {
           writeFileSync(метка, new Date().toISOString());
-          await вБота(обход
-            ? 'Не могу работать: связь с Anthropic закрыта. Поднимите v2rayN и включите TUN — ' +
-              'без него мои запросы отбиваются, и промт написать нечем.'
-            : 'Не могу работать: истёк вход в Claude на компьютере. Откройте окно Claude ' +
-              'и войдите заново — задания копятся, но взять их некому.');
+          await вБота(остановка.message);
           console.log('[будильник] дежурный не заводится, сказал Татьяне');
         }
         return;
       }
     }
   } catch { /* журнала нет — значит и отказов не было */ }
+  // Старая пауза закончилась либо причина исчезла — только теперь возвращаем
+  // обычные этапы. Нельзя сбрасывать и снова ставить подпись каждые пять секунд.
+  await полосыОжидаютClaude();
   writeFileSync(следЗапуска, new Date().toISOString());
   // Раз дошли сюда — отказов в журнале нет, значит здоров.
   fetch(`${url}/rest/v1/worker_health?id=eq.1`, {

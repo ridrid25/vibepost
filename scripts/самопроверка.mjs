@@ -20,6 +20,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 const корень = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -34,6 +35,7 @@ if (!url || !key) { console.error('В .env нет доступа к базе.');
 const h = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
 
 let сломано = 0;
+let отложено = null;
 const итог = (имя, ок, что = '') => {
   console.log(`${ок ? '  ок  ' : ' СЛОМАНО'}  ${имя}${что ? ' — ' + что : ''}`);
   if (!ок) сломано++;
@@ -81,24 +83,39 @@ console.log('Проверяю не «жив ли процесс», а «дойд
 }
 
 // ── 4. Главное: заводим задание и смотрим, ответит ли дежурный сам ────────
+// Во время лимита Claude живой тест не имеет смысла: он гарантированно не
+// ответит, но это ожидаемая пауза, а не поломка. Приёмник хранит точный срок,
+// который сообщил CLI.
+const папкаПриёмника = env.WATCH_DIR || join(homedir(), 'Desktop', 'Ролики VibePost');
+try {
+  const пауза = JSON.parse(readFileSync(join(папкаПриёмника, 'dezhurny-pause.json'), 'utf8'));
+  if (пауза?.until && new Date(пауза.until).getTime() > Date.now()) {
+    отложено = пауза;
+    итог('ДЕЖУРНЫЙ ОТВЕЧАЕТ САМ, без открытого окна', true,
+      `проверка ответа отложена: ${пауза.progress ?? пауза.detail}`);
+  }
+} catch { /* активной паузы нет — проводим живую проверку */ }
+
 const МЕТКА = `самопроверка ${new Date().toISOString()}`;
 let задание = null;
-try {
-  const r = await fetch(`${url}/rest/v1/claude_tasks`, {
-    method: 'POST', headers: { ...h, Prefer: 'return=representation' },
-    body: JSON.stringify({
-      user_id: (await (await fetch(
-        `${url}/rest/v1/profiles?error_notify_tg_id=not.is.null&select=id&limit=1`, { headers: h },
-      )).json())[0].id,
-      text: `${МЕТКА}. Это проверка связи, ничего не переписывай. Просто выполни: ` +
-        `node scripts/задания.mjs сказать "Проверка связи: дежурный ответил сам, окно не открыто." ` +
-        `и затем node scripts/задания.mjs готово <id этого задания>.`,
-    }),
-  });
-  [задание] = await r.json();
-  итог('задание записывается', !!задание);
-} catch (e) {
-  итог('задание записывается', false, String(e.message).slice(0, 60));
+if (!отложено) {
+  try {
+    const r = await fetch(`${url}/rest/v1/claude_tasks`, {
+      method: 'POST', headers: { ...h, Prefer: 'return=representation' },
+      body: JSON.stringify({
+        user_id: (await (await fetch(
+          `${url}/rest/v1/profiles?error_notify_tg_id=not.is.null&select=id&limit=1`, { headers: h },
+        )).json())[0].id,
+        text: `${МЕТКА}. Это проверка связи, ничего не переписывай. Просто выполни: ` +
+          `node scripts/задания.mjs сказать "Проверка связи: дежурный ответил сам, окно не открыто." ` +
+          `и затем node scripts/задания.mjs готово <id этого задания>.`,
+      }),
+    });
+    [задание] = await r.json();
+    итог('задание записывается', !!задание);
+  } catch (e) {
+    итог('задание записывается', false, String(e.message).slice(0, 60));
+  }
 }
 
 if (задание) {
@@ -127,10 +144,23 @@ if (задание) {
   итог('ДЕЖУРНЫЙ ОТВЕЧАЕТ САМ, без открытого окна', результат === 'ответил',
     результат === 'ответил' ? 'задание закрыто им же' : 'за 2.5 минуты задание не тронуто');
 
-  await fetch(`${url}/rest/v1/claude_tasks?id=eq.${задание.id}`, { method: 'DELETE', headers: h });
+  let убрали = false;
+  for (let попытка = 1; попытка <= 3 && !убрали; попытка++) {
+    try {
+      const r = await fetch(`${url}/rest/v1/claude_tasks?id=eq.${задание.id}`, {
+        method: 'DELETE', headers: h, signal: AbortSignal.timeout(15_000),
+      });
+      убрали = r.ok;
+    } catch { /* сеть моргнула — повторяем */ }
+    if (!убрали && попытка < 3) await new Promise((r) => setTimeout(r, 1000));
+  }
+  итог('пробное задание убрано', убрали,
+    убрали ? '' : `уберите вручную ${задание.id}`);
 }
 
 console.log(сломано
   ? `\nСЛОМАНО: ${сломано}. Пока это не починено, Татьяна ждёт ответа, которого никто не пошлёт.\n`
-  : '\nЦепочка замкнута: сообщение в бота доходит до ответа без человека.\n');
+  : отложено
+    ? `\nПАУЗА: ${отложено.progress ?? отложено.detail}. Базовые узлы исправны; живой ответ проверим после сброса.\n`
+    : '\nЦепочка замкнута: сообщение в бота доходит до ответа без человека.\n');
 process.exit(сломано ? 1 : 0);
