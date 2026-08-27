@@ -12,6 +12,7 @@
 // Вжечь титры в видео здесь нельзя: для этого нужен ffmpeg, а на сервере его
 // нет. Хук рисует сама видеомодель при генерации.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { normalizeTargetPlatform, platformLabel } from "../_shared/youtube-trend.mjs";
 
 const REGION = "us-central1";
 const MODEL = "gemini-2.5-flash";
@@ -116,8 +117,13 @@ const СХЕМА_РАЗБОРА = {
         "Разные по приёму: реплика героя, цифра, вопрос, обещание, угроза",
       items: { type: "STRING" },
     },
+    causal_pattern_preserved: {
+      type: "STRING",
+      enum: ["YES", "NO", "UNCERTAIN"],
+      description: "advisory only: whether the supplied abstract causal pattern is visibly preserved; UNCERTAIN when no trusted pattern is supplied or the video is ambiguous",
+    },
   },
-  required: ["review", "ok", "speech", "tag", "hooks"],
+  required: ["review", "ok", "speech", "tag", "hooks", "causal_pattern_preserved"],
 };
 
 /** Показывает ролик Gemini и просит разбор и дословную реплику. */
@@ -125,7 +131,16 @@ async function разобрать(
   admin: SupabaseClient,
   bytes: Uint8Array,
   задумка: string,
-): Promise<{ review: string; ok: boolean; speech: string; tag: string; hooks: string[] }> {
+  targetPlatform: string,
+  causalPattern: Record<string, unknown> | null,
+): Promise<{
+  review: string;
+  ok: boolean;
+  speech: string;
+  tag: string;
+  hooks: string[];
+  causal_pattern_preserved: "YES" | "NO" | "UNCERTAIN";
+}> {
   const { token, project } = await googleToken(admin);
   const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
     `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
@@ -141,7 +156,8 @@ async function разобрать(
             // Место действия не проверяем: «улица» была случайным словом в
             // описании серии, и разбор из-за него ругал ролики за пустыню и
             // морское дно. Интервью может быть где угодно.
-            text: `Это ролик для Telegram-канала о личных финансах. Серия ` +
+            text: `Целевая площадка: ${platformLabel(targetPlatform)}. Это ролик ` +
+              `о личных финансах. Серия ` +
               `«интервью со зверем»: микрофон у морды, зверь отвечает на вопрос ` +
               `про деньги, деадпан, ироничный чёрный юмор. Место действия любое — ` +
               `его среда обитания или, наоборот, совсем не подходящая ему обстановка. ` +
@@ -158,7 +174,12 @@ async function разобрать(
 ` +
               `И придумай ПЯТЬ ЗАГОЛОВКОВ в кадр — надпись сверху первые три ` +
               `секунды. Придумывать их должен Claude, а не Татьяна: она только ` +
-              `выбирает. Коротко, 2-5 слов, по-русски, без точки.`,
+              `выбирает. Коротко, 2-5 слов, по-русски, без точки.\n\n` +
+              (causalPattern
+                ? `TRUSTED ABSTRACT CAUSAL PATTERN: ${JSON.stringify(causalPattern)}. ` +
+                  `Отдельно верни causal_pattern_preserved = YES, NO или UNCERTAIN. ` +
+                  `Это advisory signal: не принимай решение за владельца.`
+                : `Trusted causal pattern не задан: верни causal_pattern_preserved=UNCERTAIN.`),
           },
         ],
       }],
@@ -189,7 +210,7 @@ Deno.serve(async (req) => {
   if (!fromId || !video?.file_id) return json(200, { ok: true });
 
   const { data: profile } = await admin
-    .from("profiles").select("id, error_notify_bot_id")
+    .from("profiles").select("id, error_notify_bot_id, target_platform, active_video_idea_id")
     .eq("error_notify_tg_id", fromId).maybeSingle();
   if (!profile?.error_notify_bot_id) return json(200, { ok: true });
 
@@ -213,20 +234,31 @@ Deno.serve(async (req) => {
     return json(200, { ok: true });
   }
 
-  // Подпись к видео может быть slug идеи — тогда подтягиваем задумку
+  // Подпись к видео может быть slug идеи. Без подписи используем последнюю
+  // идею, явно выбранную через «Сделаю сама»: owner metadata переносить не должен.
   const подпись = String(msg.caption ?? "").trim();
   let name = подпись || video.file_name || "Ролик из Telegram";
   let задумка = "";
+  const ideaSelect = "id,slug,hook,line,animal,prompt,target_platform,causal_pattern";
+  let idea: Record<string, unknown> | null = null;
   if (подпись) {
-    const { data: idea } = await admin
-      .from("video_ideas").select("hook, line, animal")
+    const result = await admin.from("video_ideas").select(ideaSelect)
       .eq("user_id", profile.id).eq("slug", подпись).maybeSingle();
-    if (idea) {
-      name = `${idea.animal} — ${idea.hook}`;
-      задумка = `Задумка была такая. Герой: ${idea.animal}. Хук: ${idea.hook}. ` +
-        `Реплика: «${idea.line}».`;
-    }
+    idea = result.data;
+  } else if (profile.active_video_idea_id) {
+    const result = await admin.from("video_ideas").select(ideaSelect)
+      .eq("user_id", profile.id).eq("id", profile.active_video_idea_id).maybeSingle();
+    idea = result.data;
   }
+  if (idea) {
+    name = `${idea.animal} — ${idea.hook}`;
+    задумка = `Задумка была такая. Герой: ${idea.animal}. Хук: ${idea.hook}. ` +
+      `Реплика: «${idea.line}».`;
+  }
+  const targetPlatform = normalizeTargetPlatform(idea?.target_platform ?? profile.target_platform);
+  const causalPattern = idea?.causal_pattern && typeof idea.causal_pattern === "object"
+    ? idea.causal_pattern as Record<string, unknown>
+    : null;
 
   try {
     await ответить("Принял, смотрю ролик…");
@@ -247,21 +279,33 @@ Deno.serve(async (req) => {
     if (upErr) throw new Error(upErr.message);
     const videoUrl = admin.storage.from("post-photos").getPublicUrl(key).data.publicUrl;
 
-    let разбор: { review: string; ok: boolean; speech: string; tag: string; hooks: string[] };
+    let разбор: {
+      review: string;
+      ok: boolean;
+      speech: string;
+      tag: string;
+      hooks: string[];
+      causal_pattern_preserved: "YES" | "NO" | "UNCERTAIN";
+    };
     try {
-      разбор = await разобрать(admin, bytes, задумка);
+      разбор = await разобрать(admin, bytes, задумка, targetPlatform, causalPattern);
     } catch (e) {
       разбор = {
         review: `Разобрать ролик не вышло: ${e instanceof Error ? e.message : String(e)}`,
         ok: true,
-        speech: "", tag: "", hooks: [],
+        speech: "", tag: "", hooks: [], causal_pattern_preserved: "UNCERTAIN",
       };
     }
 
     const { data: row } = await admin.from("incoming_videos").insert({
       user_id: profile.id,
+      idea_id: idea?.id ?? null,
       name: name.slice(0, 200),
-      source: "прислано боту",
+      prompt: idea?.prompt ?? null,
+      source: `${platformLabel(targetPlatform)} · прислано боту`,
+      target_platform: targetPlatform,
+      causal_pattern: causalPattern,
+      causal_pattern_review: разбор.causal_pattern_preserved,
       video_url: videoUrl,
       status: "new",
       review: разбор.review,
@@ -276,6 +320,9 @@ Deno.serve(async (req) => {
     // герой окончание — из-за этого переделывали скорпиона четыре раза.
     let текст = `<b>Разбор ролика</b>\n\n${разбор.review}`;
     if (разбор.speech) текст += `\n\n<b>Слышно так:</b> «${разбор.speech}»`;
+    if (causalPattern) {
+      текст += `\n\n<b>causal_pattern preserved:</b> ${разбор.causal_pattern_preserved}`;
+    }
     if (video.width && video.height && video.width > video.height) {
       текст += `\n\n⚠️ Кадр горизонтальный. В приложении Gemini формат <b>9:16</b> — ` +
         `отдельная настройка, словами в промте она не задаётся.`;

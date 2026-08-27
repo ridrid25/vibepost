@@ -6,6 +6,11 @@
 // Защита: секретный заголовок X-Telegram-Bot-Api-Secret-Token (Vault).
 // Всегда отвечаем Telegram 200, иначе он будет повторять доставку.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  TARGET_PLATFORMS,
+  normalizeTargetPlatform,
+  platformLabel,
+} from "../_shared/youtube-trend.mjs";
 
 let cachedSecret: string | null = null;
 
@@ -53,6 +58,28 @@ function emojiKey(r: unknown): string | null {
   return null;
 }
 
+function ownerKeyboard(targetPlatform: string) {
+  return {
+    keyboard: [
+      [{ text: `🎯 Сейчас: ${platformLabel(targetPlatform)}` }],
+      [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
+      [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
+      [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+  };
+}
+
+function trustedVideoContext(video: Record<string, unknown> | null) {
+  if (!video || video.target_platform !== TARGET_PLATFORMS.YOUTUBE_SHORTS || !video.causal_pattern) {
+    return "";
+  }
+  return ` TRUSTED INTERNAL METADATA: target_platform=youtube_shorts; ` +
+    `causal_pattern=${JSON.stringify(video.causal_pattern)}. При исправлении ` +
+    `сохранить causal pattern, beat order, violation и payoff class; source details не копировать.`;
+}
+
 // Команды владельца в личке бота
 async function handleCommand(
   admin: SupabaseClient,
@@ -64,7 +91,7 @@ async function handleCommand(
   // Владелец = тот, чей Telegram ID записан в настройках уведомлений
   const { data: profile } = await admin
     .from("profiles")
-    .select("id, error_notify_bot_id, awaiting_task, awaiting_video_id, awaiting_kind")
+    .select("id, error_notify_bot_id, awaiting_task, awaiting_video_id, awaiting_kind, target_platform")
     .eq("error_notify_tg_id", fromId)
     .maybeSingle();
   if (!profile?.error_notify_bot_id) return; // незнакомцам не отвечаем
@@ -80,6 +107,7 @@ async function handleCommand(
   if (!token) return;
 
   const uid = profile.id;
+  const targetPlatform = normalizeTargetPlatform(profile.target_platform);
   // Понимаем и команды (/status), и нажатия кнопок меню («📊 Статус»)
   const raw = msg.text.trim().toLowerCase();
   let cmd = raw.split(/[\s@]/)[0];
@@ -93,6 +121,7 @@ async function handleCommand(
     else if (raw.includes("дайджест")) cmd = "/digest";
     else if (raw.includes("входящие")) cmd = "/inbox";
     else if (raw.includes("задание")) cmd = "/task";
+    else if (raw.includes("площадк") || raw.includes("🎯") || raw.includes("youtube shorts")) cmd = "/platform";
     else cmd = "";
   }
 
@@ -104,7 +133,7 @@ async function handleCommand(
     const первая = текст.split("\n")[0].trim();
     const ждём = profile.awaiting_kind;
     const { data: ролик } = await admin
-      .from("incoming_videos").select("id, name, tag")
+      .from("incoming_videos").select("id,name,tag,idea_id,target_platform,causal_pattern")
       .eq("id", profile.awaiting_video_id).maybeSingle();
 
     let ответ: string;
@@ -113,7 +142,8 @@ async function handleCommand(
       await admin.from("incoming_videos").update({
         name: первая.includes("—") ? первая.slice(0, 200) : `${ролик?.tag ?? "Ролик"} — ${первая}`,
         hook: заголовок,
-        status: "new", rework_note: null, rework_at: null,
+        status: "new", ready: true, owner_accepted_at: new Date().toISOString(),
+        rework_note: null, rework_at: null,
       }).eq("id", profile.awaiting_video_id);
       ответ = `Заголовок в кадре: «${заголовок.toUpperCase()}». Вешаю титры.`;
     } else {
@@ -123,14 +153,15 @@ async function handleCommand(
       const сейчас = new Date().toISOString();
       await admin.from("incoming_videos").update({
         status: "rework", rework_note: текст, rework_at: сейчас, rework_ack_at: сейчас,
+        ready: false, owner_accepted_at: null,
       }).eq("id", profile.awaiting_video_id);
       await admin.from("claude_tasks").insert({
-        user_id: profile.id, video_id: profile.awaiting_video_id,
+        user_id: profile.id, video_id: profile.awaiting_video_id, idea_id: ролик?.idea_id ?? null,
         text: ждём === "sound"
           ? `ПРАВКА ЗВУКА, промт не переписывать. ${текст}. Порядок — ` +
             `docs/07_ПРАВИЛА.md, «Брак в звуке чинится звуком»: распознать по ` +
             `словам, найти донора в прошлом дубле, пересадить, вернуть роликом в бота.`
-          : текст,
+          : `${текст}.${trustedVideoContext(ролик)}`,
       });
       ответ = ждём === "sound"
         ? `Записал: «${текст.slice(0, 80)}». Чиню звук донором из прошлого дубля — ` +
@@ -160,7 +191,7 @@ async function handleCommand(
     const давность = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     const { data: свежий } = await admin
       .from("incoming_videos")
-      .select("id, name, status")
+      .select("id,name,status,idea_id,target_platform,causal_pattern")
       .eq("user_id", profile.id)
       .gte("created_at", давность)
       .in("status", ["new", "rework"])
@@ -190,13 +221,15 @@ async function handleCommand(
         ? {
           hook: заголовок,
           ...(!явное ? { name: первая } : {}),
-          status: "new",
+          status: "new", ready: true, owner_accepted_at: new Date().toISOString(),
           rework_note: null,
           rework_at: null,
         }
         : {
           status: "rework",
           rework_note: текст,
+          ready: false,
+          owner_accepted_at: null,
           // Подтверждение уходит тут же, ниже. Второе от приёмника не нужно.
           rework_at: new Date().toISOString(),
           rework_ack_at: new Date().toISOString(),
@@ -208,7 +241,10 @@ async function handleCommand(
     }
 
     await admin.from("claude_tasks").insert({
-      user_id: profile.id, text: текст, video_id: свежий?.id ?? null,
+      user_id: profile.id,
+      text: `${текст}${trustedVideoContext(свежий)}`,
+      video_id: свежий?.id ?? null,
+      idea_id: свежий?.idea_id ?? null,
     });
     await admin.from("profiles").update({ awaiting_task: false }).eq("id", profile.id);
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -272,7 +308,23 @@ async function handleCommand(
   // Если задан — шлём вторым сообщением как блок кода (одно касание = копия)
   let copyBlock: string | null = null;
 
-  if (cmd === "/status") {
+  if (cmd === "/platform") {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: `🎯 Сейчас: ${platformLabel(targetPlatform)}\n\nВыберите целевую площадку:`,
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "TikTok", callback_data: `pf:${TARGET_PLATFORMS.TIKTOK}` },
+            { text: "YouTube Shorts", callback_data: `pf:${TARGET_PLATFORMS.YOUTUBE_SHORTS}` },
+          ]],
+        },
+      }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/status") {
     const { data: stuck } = await admin.rpc("stuck_report", { p_minutes: 10 });
     const mine = (stuck ?? []).find((r: { user_id: string }) => r.user_id === uid);
 
@@ -350,28 +402,43 @@ async function handleCommand(
   } else if (cmd === "/inbox") {
     const { data: v } = await admin
       .from("incoming_videos")
-      .select("name, status, ready")
+      .select("name, status, ready, target_platform")
       .eq("user_id", uid).eq("status", "new")
       .order("created_at", { ascending: false }).limit(10);
     reply = v?.length
       ? `📥 Во «Входящих» ${v.length}:\n` +
-        v.map((x) => `• ${x.name}${x.ready ? "" : " — не согласован"}`).join("\n")
+        v.map((x) => `• ${x.name} · 🎯 ${platformLabel(x.target_platform)}` +
+          `${x.ready ? "" : " — не согласован"}`).join("\n")
       : "📥 Входящие пусты.";
   } else if (cmd === "/ideas") {
     // Идеи придумываются не мгновенно — предупреждаем, чтобы не ждали молча.
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: msg.chat.id, text: "Придумываю пять идей…" }),
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: `🎯 ${platformLabel(targetPlatform)}\nПридумываю пять идей…`,
+      }),
     }).catch(() => {});
-    await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/suggest-ideas`, {
+    const ideasResponse = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/suggest-ideas`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         "Content-Type": "application/json",
       },
       body: "{}",
-    }).catch(() => {});
+    }).catch(() => null);
+    if (!ideasResponse?.ok) {
+      const failure = await ideasResponse?.json().catch(() => null);
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: msg.chat.id,
+          text: `Идеи не созданы: ${failure?.error ?? "временный сбой"}`.slice(0, 500),
+        }),
+      }).catch(() => {});
+    }
     return;
   } else if (cmd === "/digest") {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -506,15 +573,7 @@ async function handleCommand(
       chat_id: msg.chat.id,
       text: reply,
       // Постоянное меню-клавиатура под полем ввода
-      reply_markup: {
-        keyboard: [
-          [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
-          [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
-          [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
-        ],
-        resize_keyboard: true,
-        is_persistent: true,
-      },
+      reply_markup: ownerKeyboard(targetPlatform),
     }),
   }).catch(() => {});
 
@@ -560,7 +619,9 @@ async function решениеПоРолику(
   const { data: token } = await admin
     .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
   const { data: ролик } = await admin
-    .from("incoming_videos").select("tag, name, hook_options").eq("id", videoId).maybeSingle();
+    .from("incoming_videos")
+    .select("tag,name,hook_options,idea_id,target_platform,causal_pattern")
+    .eq("id", videoId).maybeSingle();
   const кто = ролик?.tag || ролик?.name || "ролик";
   const варианты: string[] = ролик?.hook_options ?? [];
 
@@ -587,6 +648,7 @@ async function решениеПоРолику(
       hook: заголовок,
       name: `${кто} — ${заголовок}`,
       status: "new", rework_note: null, rework_at: null,
+      ready: true, owner_accepted_at: new Date().toISOString(),
     }).eq("id", videoId);
     await admin.from("profiles")
       .update({ awaiting_video_id: null, awaiting_kind: null }).eq("id", profile.id);
@@ -639,9 +701,9 @@ async function решениеПоРолику(
   // значило, и промт мог не переписать никто.
   if (что === "self") {
     await admin.from("claude_tasks").insert({
-      user_id: profile.id, video_id: videoId,
+      user_id: profile.id, video_id: videoId, idea_id: ролик?.idea_id ?? null,
       text: `Ролик «${кто}»: переписать промт самому. Своих пожеланий у Татьяны нет — ` +
-        `разбери замер по секундам, найди провал и почини его.`,
+        `разбери замер по секундам, найди провал и почини его.` + trustedVideoContext(ролик),
     });
     // Ролик НЕ помечаем доделкой. Задание с внятным текстом уже создано выше,
     // а пометка без пояснения — пустая строка «ДОДЕЛКА … <ничего>» в списке:
@@ -724,6 +786,38 @@ async function решениеПоРолику(
           },
         }
         : {}),
+    }),
+  }).catch(() => {});
+}
+
+async function решениеПоПлатформе(
+  admin: SupabaseClient,
+  cq: { id: string; data: string; from: { id: number }; message?: { chat: { id: number } } },
+) {
+  const selected = normalizeTargetPlatform(String(cq.data).split(":")[1]);
+  const { data: profile } = await admin.from("profiles")
+    .select("id,error_notify_bot_id")
+    .eq("error_notify_tg_id", String(cq.from.id)).maybeSingle();
+  if (!profile?.error_notify_bot_id) return;
+  const { data: bot } = await admin.from("bots").select("token_secret_id")
+    .eq("id", profile.error_notify_bot_id).maybeSingle();
+  const { data: token } = await admin.rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
+  if (!token) return;
+
+  await admin.from("profiles").update({
+    target_platform: selected,
+    active_video_idea_id: null,
+  }).eq("id", profile.id);
+  await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: cq.id, text: `Выбрано: ${platformLabel(selected)}` }),
+  }).catch(() => {});
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: cq.message?.chat.id ?? cq.from.id,
+      text: `🎯 Сейчас: ${platformLabel(selected)}`,
+      reply_markup: ownerKeyboard(selected),
     }),
   }).catch(() => {});
 }
@@ -832,6 +926,10 @@ Deno.serve(async (req) => {
       // только запоминают, о каком ролике пойдёт речь дальше, — чтобы
       // следующее сообщение Татьяны не приходилось привязывать по времени.
       const данные = String(update.callback_query.data ?? "");
+      if (данные.startsWith("pf:")) {
+        await решениеПоПлатформе(admin, update.callback_query);
+        return json(200, { ok: true });
+      }
       if (данные.startsWith("vid:") || данные.startsWith("hk:")) {
         await решениеПоРолику(admin, update.callback_query);
         return json(200, { ok: true });

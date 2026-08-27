@@ -13,6 +13,7 @@
 //
 // Владелец опознаётся по profiles.error_notify_tg_id: чужим нажатиям не верим.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { platformLabel } from "../_shared/youtube-trend.mjs";
 
 const REGION = "us-central1";
 const MODEL = "gemini-2.5-flash";
@@ -23,6 +24,40 @@ function json(status: number, body: unknown): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+const html = (value: unknown) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;");
+
+function ideaCard(idea: Record<string, unknown>, suffix = "") {
+  const trend = idea.trend_signal === "reference-driven"
+    ? "\nТренд-сигнал: reference-driven"
+    : "";
+  return `🎬 <b>${html(idea.hook)}</b>\n\n${html(idea.line)}\n\n<i>${html(idea.animal)}</i>` +
+    `\n\nЦелевая площадка: ${platformLabel(String(idea.target_platform ?? "tiktok"))}` +
+    `${trend}${suffix ? `\n\n${suffix}` : ""}`;
+}
+
+function trustedTaskContext(idea: Record<string, unknown>) {
+  const platform = String(idea.target_platform ?? "tiktok");
+  if (platform !== "youtube_shorts") {
+    return "target_platform=tiktok; сохранить существующий current production house format.";
+  }
+  const metadata = {
+    target_platform: "youtube_shorts",
+    reference_id: idea.reference_source_id ?? null,
+    causal_pattern: idea.causal_pattern ?? null,
+    payoff_class: idea.payoff_class ?? null,
+    critical_fidelity_constraints: idea.fidelity_constraints ?? null,
+  };
+  return `TRUSTED INTERNAL METADATA: ${JSON.stringify(metadata)}. ` +
+    `Для reference-driven идеи causal_pattern, beat order, viewer prediction, ` +
+    `violation class, escalation и payoff class сохранить. Source character, ` +
+    `dialogue, plot, shots, branding и creator identity не копировать. Финальный ` +
+    `prompt: vertical 9:16, около 10 секунд, ранний visual hook, один главный ` +
+    `герой и prop/mechanism, ясный visual payoff, короткая русская реплика.`;
 }
 
 // ── доступ к Google по служебному аккаунту ────────────────────────────────
@@ -126,6 +161,8 @@ Deno.serve(async (req) => {
   const cq = await req.json().catch(() => null);
   const data: string = cq?.data ?? "";
   const fromId = String(cq?.from?.id ?? "");
+  const chatId = cq?.message?.chat?.id;
+  const messageId = cq?.message?.message_id;
   if (!/^(idea|cap|veo):/.test(data) || !fromId) {
     return json(200, { ok: true });
   }
@@ -205,7 +242,11 @@ Deno.serve(async (req) => {
       const выбранная = варианты[Number(номер)];
       if (!выбранная) return json(200, { ok: true });
       await admin.from("incoming_videos")
-        .update({ caption: выбранная, ready: true }).eq("id", ролик.id);
+        .update({
+          caption: выбранная,
+          ready: true,
+          owner_accepted_at: new Date().toISOString(),
+        }).eq("id", ролик.id);
       await tg("editMessageText", {
         chat_id: cq.message?.chat?.id,
         message_id: cq.message?.message_id,
@@ -260,15 +301,15 @@ ${выбранная}
   }
 
   const [, action, ideaId] = data.split(":");
-  const chatId = cq.message?.chat?.id;
-  const messageId = cq.message?.message_id;
 
   // Правка реплики: Татьяна отвечает на карточку своим текстом. Идею находим
   // по сообщению, на которое она ответила, и пересобираем промт под новый текст.
   if (action === "edit") {
     const новая = String(cq.new_line ?? "").trim();
     const { data: правимая } = await admin
-      .from("video_ideas").select("id, user_id, slug, hook, animal")
+      .from("video_ideas").select(
+        "id,user_id,slug,hook,animal,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints",
+      )
       .eq("user_id", profile.id).eq("tg_message_id", messageId).maybeSingle();
     if (!правимая || !новая) {
       await tg("sendMessage", {
@@ -284,10 +325,12 @@ ${выбранная}
       .update({ line: новая, prompt: null }).eq("id", правимая.id);
     await admin.from("claude_tasks").insert({
       user_id: правимая.user_id,
+      idea_id: правимая.id,
       text: `Реплику правили. Переписать промт. Герой: ${правимая.animal}. ` +
         `Хук: ${правимая.hook}. Новая реплика: «${новая}». Slug: ${правимая.slug}. ` +
+        `${trustedTaskContext(правимая)} ` +
         `Порядок: scenarist → director → cinematographer → critic, перед этим ` +
-        `JOURNAL.md и PROCESS.md. Промт прислать одним блоком.`,
+        `JOURNAL.md и PROCESS.md. Промт прислать одним блоком и записать в video_ideas.prompt.`,
     });
     await tg("sendMessage", {
       chat_id: chatId,
@@ -305,7 +348,7 @@ ${выбранная}
   }
 
   const { data: idea } = await admin
-    .from("video_ideas").select("id, user_id, slug, hook, line, animal, prompt")
+    .from("video_ideas").select("id,user_id,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints")
     .eq("id", ideaId).eq("user_id", profile.id).maybeSingle();
   if (!idea) {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Идея не найдена" });
@@ -329,11 +372,15 @@ ${выбранная}
     })
     .eq("id", idea.id);
 
+  if (action === "self") {
+    await admin.from("profiles").update({ active_video_idea_id: idea.id }).eq("id", profile.id);
+  }
+
   if (chatId && messageId) {
     await tg("editMessageText", {
       chat_id: chatId,
       message_id: messageId,
-      text: `🎬 <b>${idea.hook}</b>\n\n${idea.line}\n\n<i>${idea.animal}</i>\n\n${решение.итог}`,
+      text: ideaCard(idea, решение.итог),
       parse_mode: "HTML",
     });
   }
@@ -346,10 +393,13 @@ ${выбранная}
   if (action === "self") {
     const { error: сбой } = await admin.from("claude_tasks").insert({
       user_id: idea.user_id,
+      idea_id: idea.id,
       text: `Написать промт ролика по идее. Герой: ${idea.animal}. ` +
         `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
+        `${trustedTaskContext(idea)} ` +
         `Порядок обязателен: scenarist → director → cinematographer → critic, ` +
-        `перед этим JOURNAL.md и PROCESS.md. Промт прислать одним блоком.`,
+        `перед этим JOURNAL.md и PROCESS.md. Промт прислать одним блоком и ` +
+        `записать в video_ideas.prompt.`,
     });
     // Отказ базы нельзя выдавать за успех: 7 августа идея пропала молча, а
     // Татьяне ушло «Идею принял». Она ждала промт, которого никто не писал.
@@ -383,8 +433,10 @@ ${выбранная}
     } else {
       await admin.from("claude_tasks").insert({
         user_id: idea.user_id,
+        idea_id: idea.id,
         text: `Написать промт для ПЛАТНОЙ генерации. Герой: ${idea.animal}. ` +
           `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
+          `${trustedTaskContext(idea)} ` +
           `Порядок: scenarist → director → cinematographer → critic, перед этим ` +
           `JOURNAL.md и PROCESS.md. Промт записать в video_ideas.prompt и ` +
           `прислать Татьяне смету — без её подтверждения генерацию не запускать.`,

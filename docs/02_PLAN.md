@@ -187,3 +187,14 @@ Content Brigade Learning Engine.
 
 **✅ Чекап 10:** тестовое событие опубликовано в тестовый канал, помечено
 отправленным, повтора нет — проверено 31.07.
+
+## Этап 12 — YouTube Shorts field trial V0.1 (26.08.2026)
+
+**Сделано:** persistent platform selector в текущем Telegram UI; bounded live
+YouTube reference input до `suggest-ideas`; trusted causal metadata в
+существующем `claude_tasks` и returned-video review; синхронизация formal
+acceptance после выбора заголовка; сохранение target/reference/review state во
+VibePost без новой БД.
+
+**Граница V0.1:** бесплатная ручная генерация и ручная публикация на YouTube.
+Paid Veo и YouTube uploader не включены. TikTok production path не изменён.

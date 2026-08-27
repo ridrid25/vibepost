@@ -57,7 +57,9 @@ function мск(iso) {
 if (команда === 'список') {
   const t = await (await fetch(
     `${url}/rest/v1/claude_tasks?status=in.(new,processing)` +
-    `&select=id,text,created_at,video_id,incoming_videos(name,measure_avg,measure_worst,video_url)` +
+    `&select=id,text,created_at,video_id,idea_id,` +
+    `incoming_videos(name,measure_avg,measure_worst,video_url,target_platform,causal_pattern),` +
+    `video_ideas(slug,target_platform,reference_source_id,causal_pattern,payoff_class,fidelity_constraints)` +
     `&order=created_at`, { headers: h })).json();
   // Ролики, возвращённые кнопкой «↩︎ На доделку», — такое же задание, только
   // пришло из приложения, а не из бота. Разбираются в том же проходе.
@@ -86,6 +88,9 @@ if (команда === 'список') {
       if (в) {
         console.log(['        ↳ ролик', z.video_id, в.name,
           `замер ${в.measure_avg ?? '—'}/${в.measure_worst ?? '—'}`, в.video_url].join('	'));
+        if (в.target_platform === 'youtube_shorts' && в.causal_pattern) {
+          console.log(`        ↳ TRUSTED youtube_shorts causal_pattern=${JSON.stringify(в.causal_pattern)}`);
+        }
       }
     }
     for (const v of r) {
@@ -212,7 +217,15 @@ if (команда === 'список') {
   // «копировать», и Татьяна вставляет его в Gemini одним касанием.
   // Лимит сообщения — 4096 знаков, поэтому JSON шлём без отступов.
   const { readFileSync } = await import('node:fs');
-  const [файл, ...подпись] = аргументы;
+  const taskFlag = аргументы.indexOf('--task');
+  const taskId = taskFlag >= 0 ? аргументы[taskFlag + 1] : null;
+  if (taskFlag >= 0 && !/^[0-9a-f-]{36}$/i.test(taskId ?? '')) {
+    throw new Error('после --task нужен UUID задания');
+  }
+  const чистые = taskFlag >= 0
+    ? аргументы.filter((_, index) => index !== taskFlag && index !== taskFlag + 1)
+    : аргументы;
+  const [файл, ...подпись] = чистые;
   if (!файл) throw new Error('нужен путь к json-промпту');
   const компакт = JSON.stringify(JSON.parse(readFileSync(файл, 'utf8')));
   const экран = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -230,7 +243,25 @@ if (команда === 'список') {
   const блок = `<pre>${экран(компакт)}</pre>`;
   await бот(экран(шапка), 'HTML');
   await бот(блок, 'HTML');
+  if (taskId) {
+    const taskResponse = await fetch(
+      `${url}/rest/v1/claude_tasks?id=eq.${taskId}&select=idea_id&limit=1`,
+      { headers: h },
+    );
+    if (!taskResponse.ok) throw new Error('не удалось найти idea_id задания');
+    const [task] = await taskResponse.json();
+    if (task?.idea_id) {
+      const saveResponse = await fetch(`${url}/rest/v1/video_ideas?id=eq.${task.idea_id}`, {
+        method: 'PATCH', headers: h,
+        body: JSON.stringify({
+          prompt: компакт,
+          generated_prompt_at: new Date().toISOString(),
+        }),
+      });
+      if (!saveResponse.ok) throw new Error('промпт отправлен, но не записался в video_ideas');
+    }
+  }
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
-  console.log('команды: список | взять [кто] | ролик <файл> [id-ролика] \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [подпись]');
+  console.log('команды: список | взять [кто] | ролик <файл> [id-ролика] \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [--task <id>] [подпись]');
 }

@@ -58,3 +58,14 @@
 | Ключи API Google | формат `AQ.` не работает с REST |
 | Модели Veo дороже лёгкой | быстрая вдвое, обычная в восемь раз дороже |
 | Вжигание титров на сервере | нет ffmpeg в Edge Functions |
+
+## YouTube Shorts field trial V0.1
+
+| Часть | Реализация |
+|---|---|
+| Trend metadata | YouTube Data API v3, read-only `videos.list`, secret `YOUTUBE_API_KEY` в Supabase secrets |
+| Trend scope | Маленький реестр принятых V0.1 references; без crawler/dashboard |
+| Owner interface | Существующий Telegram bot и его текущие кнопки |
+| Video generation | Бесплатная ручная генерация по JSON prompt из Telegram |
+| Review | Existing Gemini advisory review + numerical `measure.py` |
+| YouTube publication | Ручная: YouTube OAuth/upload provider в VibePost отсутствует |

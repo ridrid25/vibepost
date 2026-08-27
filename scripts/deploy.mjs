@@ -40,6 +40,10 @@ const БЕЗ_ПРОВЕРКИ_КЛЮЧА = new Set([
 // shared module must be bundled by the official CLI, which also reads the
 // checked-in verify_jwt policy from supabase/config.toml.
 const ТОЛЬКО_SUPABASE_CLI = new Set([
+  'suggest-ideas',
+  'idea-button',
+  'video-from-bot',
+  'telegram-webhook',
   'tiktok-oauth-start',
   'tiktok-oauth-callback',
   'tiktok-sync',

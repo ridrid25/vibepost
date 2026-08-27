@@ -964,3 +964,14 @@ stop». Ограничено временем — `before 5.45`.
 скачал mp4, ffmpeg в wav, faster-whisper small. Иначе долгопята и лобстера
 легко перепутать — оба из одной вечерней четвёрки 24.08.
 
+## YouTube Shorts field trial V0.1 — готовность 26.08.2026
+
+- Telegram selector и persistent `target_platform`: подключены.
+- Live YouTube Data API → existing `suggest-ideas`: подключено bounded-набором.
+- Self prompt, returned-video review, rework и owner acceptance: остаются в
+  текущем Telegram flow; causal fidelity добавлена как advisory metadata.
+- TikTok: прежний control/current production mode сохранён.
+- YouTube publication: **manual required**. В существующем VibePost нет
+  YouTube OAuth/upload provider; `chats` публикуются только через Telegram Bot API.
+- Paid Veo: не используется.
+

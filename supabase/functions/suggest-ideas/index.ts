@@ -1,6 +1,6 @@
-// suggest-ideas: Gemini придумывает идеи роликов серии «уличное интервью»
-// и присылает их владелице карточками в бота с кнопками
-// «✅ Беру · 🔄 Другое · 🗑 Мимо» и общей «➕ Ещё пять».
+// suggest-ideas: Gemini придумывает идеи роликов и присылает их владелице
+// карточками в существующий Telegram flow. TikTok сохраняет прежний house
+// mode. YouTube Shorts получает bounded live Trend V0.1 context до карточек.
 //
 // Доступ к Google — через служебный аккаунт (JSON в Vault, имя google_sa_json):
 // подписываем JWT → меняем на токен → зовём Vertex AI. Ключей API не нужно.
@@ -9,6 +9,15 @@
 //
 // Вызов: POST { count?: number } — по умолчанию 5.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  TARGET_PLATFORMS,
+  buildYoutubeApprovedFallback,
+  fetchYoutubeTrendCandidates,
+  normalizeTargetPlatform,
+  platformLabel,
+  selectYoutubeExperimentSet,
+  trustedIdeaMetadata,
+} from "../_shared/youtube-trend.mjs";
 
 const REGION = "us-central1";
 const MODEL = "gemini-2.5-flash";
@@ -115,6 +124,20 @@ const СХЕМА = {
   required: ["ideas"],
 };
 
+const html = (value: unknown) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;");
+
+function cardText(idea: Record<string, unknown>, targetPlatform: string): string {
+  const platform = platformLabel(targetPlatform);
+  const trend = idea.trend_signal === "reference-driven"
+    ? "\nТренд-сигнал: reference-driven"
+    : "";
+  return `🎬 <b>${html(idea.hook)}</b>\n\n${html(idea.line)}\n\n<i>${html(idea.animal)}</i>` +
+    `\n\nЦелевая площадка: ${platform}${trend}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
@@ -124,12 +147,13 @@ Deno.serve(async (req) => {
   );
 
   const body = await req.json().catch(() => ({}));
-  const count = Math.min(Math.max(Number(body.count) || 5, 1), 10);
+  const count = Math.min(Math.max(Number(body.count) || 5, 1), 5);
+  const previewOnly = body.preview_only === true;
 
   // Владелец = тот, у кого настроены уведомления в Telegram
   const { data: profile } = await admin
     .from("profiles")
-    .select("id, error_notify_tg_id, error_notify_bot_id")
+    .select("id, error_notify_tg_id, error_notify_bot_id, target_platform")
     .not("error_notify_tg_id", "is", null)
     .limit(1)
     .maybeSingle();
@@ -143,60 +167,121 @@ Deno.serve(async (req) => {
     .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
   if (!token) return json(400, { error: "Не удалось получить токен бота" });
 
+  const targetPlatform = normalizeTargetPlatform(profile.target_platform);
+
   // Чтобы звери не повторялись — показываем модели, кто уже был
   const { data: былые } = await admin
     .from("video_ideas").select("animal").eq("user_id", profile.id).limit(200);
   const занятые = [...new Set((былые ?? []).map((r) => r.animal).filter(Boolean))];
 
-  let ideas: Array<Record<string, string>>;
+  let ideas: Array<Record<string, string>> = [];
+  let experimentSet: Array<Record<string, unknown>> = [];
+  let ideaSource = "existing-gemini";
   try {
-    const { token: gToken, project } = await googleToken(admin);
-    const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
-      `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${gToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          role: "user",
-          parts: [{
-            text: `${СТИЛЬ}\n\nПридумай ${count} новых идей.\n` +
-              (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "") +
-              `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
-              `без морали и без объяснений шутки.`,
-          }],
-        }],
-        generationConfig: {
-          temperature: 1.1,
-          responseMimeType: "application/json",
-          responseSchema: СХЕМА,
-        },
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(JSON.stringify(data).slice(0, 300));
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
-    ideas = JSON.parse(text).ideas ?? [];
+    if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
+      const candidates = await fetchYoutubeTrendCandidates({
+        apiKey: Deno.env.get("YOUTUBE_API_KEY"),
+      });
+      experimentSet = selectYoutubeExperimentSet(candidates, count);
+    }
   } catch (e) {
-    return json(500, { error: `Gemini не ответил: ${e instanceof Error ? e.message : String(e)}` });
+    return json(500, { error: `Trend input недоступен: ${e instanceof Error ? e.message : String(e)}` });
   }
-  if (ideas.length === 0) return json(500, { error: "Gemini вернул пустой список" });
+
+  if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
+    // First field trial uses only the four already Controller-approved V0.1
+    // adaptations plus CONTROL. A live model may rewrite their causal beats,
+    // so it is deliberately not placed between trusted DNA and Telegram cards.
+    ideas = buildYoutubeApprovedFallback(experimentSet);
+    ideaSource = "controller-approved-v0.1";
+  } else {
+    try {
+      const { token: gToken, project } = await googleToken(admin);
+      const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
+        `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${gToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            role: "user",
+            parts: [{
+              text: `${СТИЛЬ}\n\nПридумай ${count} новых идей.\n` +
+                (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "") +
+                `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
+                `без морали и без объяснений шутки.`,
+            }],
+          }],
+          generationConfig: {
+            temperature: 1.1,
+            responseMimeType: "application/json",
+            responseSchema: СХЕМА,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(JSON.stringify(data).slice(0, 300));
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+      ideas = JSON.parse(text).ideas ?? [];
+    } catch (e) {
+      return json(500, { error: `Gemini не ответил: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  if (ideas.length === 0) {
+    return json(500, { error: "Генератор идей вернул пустой список" });
+  }
+
+  const rows: Array<Record<string, any>> = ideas.map((idea) => {
+    const candidate = targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
+      ? experimentSet.find((entry) => entry.reference_source_id === idea.reference_id)
+      : null;
+    return {
+      user_id: profile.id,
+      slug: idea.slug,
+      animal: idea.animal,
+      hook: idea.hook,
+      line: idea.line,
+      prompt: idea.prompt,
+      target_platform: targetPlatform,
+      ...(targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
+        ? trustedIdeaMetadata(candidate)
+        : {}),
+    };
+  });
+
+  if (previewOnly) {
+    return json(200, {
+      ok: true,
+      preview: true,
+      idea_source: ideaSource,
+      target_platform: targetPlatform,
+      ideas: rows.map((row) => ({
+        slug: row.slug,
+        hook: row.hook,
+        line: row.line,
+        target_platform: row.target_platform,
+        trend_signal: row.trend_signal ?? null,
+        reference_source_id: row.reference_source_id ?? null,
+        reference_published_at: row.reference_published_at ?? null,
+        reference_views: row.reference_views ?? null,
+        reference_vph: row.reference_vph ?? null,
+        reference_channel_baseline_views: row.reference_channel_baseline_views ?? null,
+        reference_outlier_ratio: row.reference_outlier_ratio ?? null,
+        causal_pattern: row.causal_pattern ?? null,
+        payoff_class: row.payoff_class ?? null,
+        card_text: cardText(row, targetPlatform),
+      })),
+    });
+  }
 
   const { data: saved } = await admin
     .from("video_ideas")
-    .insert(ideas.map((i) => ({
-      user_id: profile.id,
-      slug: i.slug,
-      animal: i.animal,
-      hook: i.hook,
-      line: i.line,
-      prompt: i.prompt,
-    })))
-    .select("id, animal, hook, line");
+    .insert(rows)
+    .select("id, animal, hook, line, target_platform, trend_signal");
 
   // Карточки в бота: под каждой три кнопки
   for (const idea of saved ?? []) {
-    const текст = `🎬 <b>${idea.hook}</b>\n\n${idea.line}\n\n<i>${idea.animal}</i>`;
+    const текст = cardText(idea, targetPlatform);
     const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
