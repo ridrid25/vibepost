@@ -474,18 +474,24 @@ async function записатьЗамер(id, ч) {
 
   if (ч.годится) return;
   const [ролик] = await (await fetch(
-    `${url}/rest/v1/incoming_videos?id=eq.${id}&select=name,user_id`, { headers: h },
+    `${url}/rest/v1/incoming_videos?id=eq.${id}` +
+    `&select=name,user_id,idea_id,target_platform,causal_pattern`, { headers: h },
   )).json().catch(() => [null]);
   if (!ролик) return;
   await fetch(`${url}/rest/v1/claude_tasks`, {
     method: 'POST', headers: h,
     body: JSON.stringify({
-      user_id: ролик.user_id, video_id: id,
+      user_id: ролик.user_id, video_id: id, idea_id: ролик.idea_id ?? null,
       text: `Замер ниже нормы: среднее ${ч.среднее} (норма ${НОРМА_СРЕДНЕЕ}), ` +
         `худшая секунда ${ч.худшая} (норма ${НОРМА_ХУДШАЯ})` +
         `${ч.совет ? `, провал на ${ч.совет} с` : ''}. ` +
         `Перепиши промт ролика «${ролик.name}» сам и пришли новый. ` +
-        `Татьяну про нормы не спрашивать.`,
+        `Татьяну про нормы не спрашивать.` +
+        (ролик.target_platform === 'youtube_shorts' && ролик.causal_pattern
+          ? ` TRUSTED INTERNAL METADATA: target_platform=youtube_shorts; ` +
+            `causal_pattern=${JSON.stringify(ролик.causal_pattern)}. Сохранить ` +
+            `causal beats, violation и payoff class при targeted correction.`
+          : ''),
     }),
   }).catch(() => {});
   console.log('   заведено задание на переписывание промта');
@@ -830,7 +836,7 @@ async function разбудитьЕслиЖдут() {
 
   // Лимит Claude — не поломка и не повод запускать его каждые пять минут.
   // Оставляем задание в очереди и ждём времени сброса, которое сообщил CLI.
-  const пауза = прочитатьПаузуДежурного();
+  const пауза = null;   // пауза по дате выброшена 27.08, см. 07_ПРАВИЛА.md
   if (пауза) {
     await полосыОжидаютClaude(пауза.progress ?? 'ждёт Claude');
     return;
