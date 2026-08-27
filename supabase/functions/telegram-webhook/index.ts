@@ -540,11 +540,33 @@ async function handleCommand(
       "через коннектор Supabase журналы и зависшие посты и скажи, что " +
       "сломалось и как чинить.";
   } else {
-    // Любой текст, который не команда, — это задание. Раньше он молча
-    // проваливался: бот показывал меню, а сообщение нигде не оставалось.
-    // 4 августа так пропало задание Татьяны целиком. Ни одно её сообщение
-    // не должно исчезать — жать «✍️ Задание» для этого не нужно.
+    // Ссылка на YouTube-шортс — не задание, а публикация: Татьяна выложила
+    // ролик руками и прислала адрес. Регистрируем его в учёте, и дальше
+    // расписание само снимает просмотры читательским ключом.
     const текст = msg.text.trim();
+    const ютуб = текст.match(/(?:youtube\.com\/(?:shorts\/|watch\?v=)|youtu\.be\/)[A-Za-z0-9_-]{11}/);
+    if (ютуб) {
+      const р = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/shorts-stats`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url: текст, user_id: uid }),
+      }).then((x) => x.json()).catch(() => null);
+      reply = р?.ok
+        ? `Шорт принят на учёт: «${р.title ?? "без названия"}».` + СТРОКА + СТРОКА +
+          `Сейчас у него ${р.views ?? 0} просмотров. Числа буду снимать сам ` +
+          `каждые несколько часов — когда наберётся несколько роликов, станет ` +
+          `видно, что заходит вашей аудитории.`
+        : `Ссылку вижу, но записать не смог: ${р?.error ?? "нет ответа"}. ` +
+          `Проверьте, что ролик открыт для всех.`;
+      await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: msg.chat.id, text: reply }),
+      }).catch(() => {});
+      return;
+    }
     await admin.from("claude_tasks").insert({ user_id: uid, text: текст });
     // Подсказка про кнопку — только когда ролик правда ждёт решения. Иначе
     // Татьяна отвечает на вопрос про реплики, а бот заговаривает про замер.
