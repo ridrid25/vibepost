@@ -65,7 +65,7 @@ function ownerKeyboard(targetPlatform: string) {
   const тг = targetPlatform !== TARGET_PLATFORMS.YOUTUBE_SHORTS;
   return {
     keyboard: [
-      [{ text: `${тг ? "✅ " : ""}Телеграм-канал` },
+      [{ text: `${тг ? "✅ " : ""}ТикТок/Телеграм` },
        { text: `${тг ? "" : "✅ "}YouTube-канал` }],
       [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
       [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
@@ -126,7 +126,7 @@ async function handleCommand(
     else if (raw.includes("дайджест")) cmd = "/digest";
     else if (raw.includes("входящие")) cmd = "/inbox";
     else if (raw.includes("задание")) cmd = "/task";
-    else if (raw.includes("телеграм-канал")) cmd = "/pf_tg";
+    else if (raw.includes("тикток") || raw.includes("телеграм-канал")) cmd = "/pf_tg";
     else if (raw.includes("youtube")) cmd = "/pf_yt";
     else if (raw.includes("площадк") || raw.includes("🎯")) cmd = "/platform";
     else cmd = "";
@@ -322,7 +322,7 @@ async function handleCommand(
       ? "Переключила на YouTube-канал: идеи будут строиться по чужим удачным " +
         "шортсам, а новые ролики вашего канала берутся на учёт сами." + СТРОКА + СТРОКА +
         "Галочка на кнопке внизу показывает, какой режим включён."
-      : "Переключила на Телеграм-канал: идеи снова свои, из стиля серии." + СТРОКА + СТРОКА +
+      : "Переключила на ТикТок/Телеграм: идеи снова свои, из стиля серии." + СТРОКА + СТРОКА +
         "Галочка на кнопке внизу показывает, какой режим включён.";
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },
