@@ -141,3 +141,29 @@ create index idx_youtube_publish_queue_due
 alter table public.youtube_publish_queue enable row level security;
 create policy "youtube_publish_queue_owner_read" on public.youtube_publish_queue
   for select using ((select auth.uid()) = user_id);
+
+-- Захват срочных заданий очереди публикации: for update skip locked,
+-- статус processing — двойная загрузка исключена (правило планировщика №4).
+-- Применено отдельной миграцией youtube_publish_claim 28.08.
+create or replace function public.claim_due_youtube_publish(p_limit integer default 1)
+returns setof public.youtube_publish_queue
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.youtube_publish_queue q
+     set status = 'processing',
+         attempts = q.attempts + 1,
+         updated_at = now()
+   where q.id in (
+     select id from public.youtube_publish_queue
+      where status = 'scheduled'
+        and scheduled_at <= now()
+      order by scheduled_at
+      limit greatest(p_limit, 1)
+      for update skip locked
+   )
+  returning q.*;
+$$;
+revoke execute on function public.claim_due_youtube_publish(integer) from public, anon, authenticated;
+grant execute on function public.claim_due_youtube_publish(integer) to service_role;
