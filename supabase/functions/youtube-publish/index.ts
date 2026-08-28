@@ -269,7 +269,9 @@ Deno.serve(async (req) => {
       item.user_id,
       `«${item.title}» повесил в студию, выйдет ${мск(item.scheduled_at)}.\n` +
         `Осталось подобрать музыку — кнопка ниже, вкладка «Аудио», сохранить.`,
-      { text: "🎵 Подобрать музыку", url: `https://studio.youtube.com/video/${youtubeId}/editor` },
+      // approve_browser_access: без него мобильная студия показывает заглушку
+      // «установите приложение» и теряет адрес ролика.
+      { text: "🎵 Подобрать музыку", url: `https://studio.youtube.com/video/${youtubeId}/editor?approve_browser_access=true` },
     );
     return json(200, { done: 1, id: item.id, youtube_video_id: youtubeId });
   } catch (error) {
