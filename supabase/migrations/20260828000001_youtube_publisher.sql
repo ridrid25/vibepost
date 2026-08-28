@@ -237,3 +237,34 @@ create policy "youtube_publish_queue_owner_delete" on public.youtube_publish_que
 revoke update on public.youtube_publish_queue from authenticated;
 grant update (title, description, tags, music_track_id, music_storage_path, music_added_at)
   on public.youtube_publish_queue to authenticated;
+
+-- ── Заливка в студию скрытым (применено миграцией youtube_queue_uploaded_status,
+--    28.08 ночь) ─────────────────────────────────────────────────────────────
+-- status='uploaded' = ролик в студии с publishAt, публикует сам YouTube.
+alter table public.youtube_publish_queue
+  drop constraint youtube_publish_queue_status_check;
+alter table public.youtube_publish_queue
+  add constraint youtube_publish_queue_status_check
+  check (status in ('draft', 'scheduled', 'processing', 'uploaded', 'published', 'failed'));
+
+-- Захват — за 48 часов до выхода (замена той же функции).
+create or replace function public.claim_due_youtube_publish(p_limit integer default 1)
+returns setof public.youtube_publish_queue
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.youtube_publish_queue q
+     set status = 'processing',
+         attempts = q.attempts + 1,
+         updated_at = now()
+   where q.id in (
+     select id from public.youtube_publish_queue
+      where status = 'scheduled'
+        and scheduled_at <= now() + interval '48 hours'
+      order by scheduled_at
+      limit greatest(p_limit, 1)
+      for update skip locked
+   )
+  returning q.*;
+$$;
