@@ -200,3 +200,40 @@ end;
 $$;
 revoke execute on function public.youtube_queue_resume(uuid) from public, anon, authenticated;
 grant execute on function public.youtube_queue_resume(uuid) to service_role;
+
+-- ── Музыка (применено миграциями youtube_queue_music, youtube_music_library,
+--    youtube_music_mixed_at, music_tracks_attribution — 28.08) ──────────────
+-- Татьяна выбирает трек к ролику в приложении; микшер вшивает и ставит в
+-- расписание. Фонотека наполнена треками Kevin MacLeod (CC BY 4.0).
+
+create table public.music_tracks (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  title text not null,
+  storage_bucket text not null default 'post-photos',
+  storage_path text not null,
+  attribution text,
+  created_at timestamptz not null default now()
+);
+alter table public.music_tracks enable row level security;
+create policy "music_tracks_owner_all" on public.music_tracks
+  for all using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+alter table public.youtube_publish_queue
+  add column music_storage_path text,
+  add column music_added_at timestamptz,
+  add column music_mixed_at timestamptz,
+  add column incoming_video_id uuid references public.incoming_videos (id) on delete set null,
+  add column music_track_id uuid references public.music_tracks (id) on delete set null;
+
+create policy "youtube_publish_queue_owner_insert" on public.youtube_publish_queue
+  for insert with check ((select auth.uid()) = user_id);
+create policy "youtube_publish_queue_owner_update" on public.youtube_publish_queue
+  for update using ((select auth.uid()) = user_id and status in ('draft', 'scheduled', 'failed'))
+  with check ((select auth.uid()) = user_id);
+create policy "youtube_publish_queue_owner_delete" on public.youtube_publish_queue
+  for delete using ((select auth.uid()) = user_id and status in ('draft', 'scheduled', 'failed'));
+revoke update on public.youtube_publish_queue from authenticated;
+grant update (title, description, tags, music_track_id, music_storage_path, music_added_at)
+  on public.youtube_publish_queue to authenticated;
