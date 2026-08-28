@@ -167,3 +167,36 @@ as $$
 $$;
 revoke execute on function public.claim_due_youtube_publish(integer) from public, anon, authenticated;
 grant execute on function public.claim_due_youtube_publish(integer) to service_role;
+
+-- Возобновление очереди после «стоп ютуб» (применено миграцией
+-- youtube_queue_resume 28.08). Будущие сроки не трогаем; просроченные
+-- разводим по 5 часов — квота пускает ~6 загрузок в сутки.
+create or replace function public.youtube_queue_resume(p_user_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_count integer;
+begin
+  with due as (
+    select id, row_number() over (order by scheduled_at) as rn
+      from public.youtube_publish_queue
+     where user_id = p_user_id and status = 'draft'
+  )
+  update public.youtube_publish_queue q
+     set status = 'scheduled',
+         scheduled_at = case
+           when q.scheduled_at > now() then q.scheduled_at
+           else now() + (d.rn * interval '5 hours')
+         end,
+         updated_at = now()
+    from due d
+   where q.id = d.id;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+revoke execute on function public.youtube_queue_resume(uuid) from public, anon, authenticated;
+grant execute on function public.youtube_queue_resume(uuid) to service_role;
