@@ -78,8 +78,45 @@ Deno.serve(async (req) => {
     });
   }
 
+
+  // ── самообслуживание: новые шортсы канала находим сами ──────────────────
+  // Адрес канала вставлен один раз в profiles.youtube_channel_id. Дальше
+  // Татьяна просто выкладывает — присылать ссылки не нужно: каждые полчаса
+  // расписание смотрит свежие загрузки канала и берёт новые на учёт.
+  async function подобратьНовыеСКанала() {
+    const { data: профили } = await admin
+      .from("profiles").select("id, youtube_channel_id")
+      .not("youtube_channel_id", "is", null);
+    let добавлено = 0;
+    for (const п of профили ?? []) {
+      const кан = await fetch(
+        "https://www.googleapis.com/youtube/v3/channels?part=contentDetails" +
+        `&id=${п.youtube_channel_id}&key=${ключ}`,
+      ).then((x) => x.json()).catch(() => null);
+      const плейлист = кан?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+      if (!плейлист) continue;
+      const заг = await fetch(
+        "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet" +
+        `&playlistId=${плейлист}&maxResults=10&key=${ключ}`,
+      ).then((x) => x.json()).catch(() => null);
+      for (const эл of заг?.items ?? []) {
+        const vid = эл.snippet?.resourceId?.videoId;
+        if (!vid) continue;
+        const { error } = await admin.from("published_shorts").upsert({
+          user_id: п.id,
+          youtube_id: vid,
+          title: эл.snippet?.title ?? null,
+          published_at: эл.snippet?.publishedAt ?? null,
+        }, { onConflict: "youtube_id", ignoreDuplicates: true });
+        if (!error) добавлено++;
+      }
+    }
+    return добавлено;
+  }
+
   // ── плановый съём чисел по всем шортсам ─────────────────────────────────
   if (body.poll) {
+    await подобратьНовыеСКанала();
     const { data: шорты } = await admin
       .from("published_shorts").select("id, youtube_id, published_at").limit(50);
     if (!шорты?.length) return json(200, { ok: true, обновлено: 0 });
