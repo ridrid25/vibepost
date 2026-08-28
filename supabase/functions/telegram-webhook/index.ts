@@ -117,7 +117,10 @@ async function handleCommand(
   const raw = msg.text.trim().toLowerCase();
   let cmd = raw.split(/[\s@]/)[0];
   if (!cmd.startsWith("/")) {
-    if (raw.includes("статус")) cmd = "/status";
+    if ((raw.includes("ютуб") || raw.includes("youtube")) && raw.includes("очередь")) cmd = "/yt_queue";
+    else if ((raw.includes("ютуб") || raw.includes("youtube")) && raw.includes("стоп")) cmd = "/yt_stop";
+    else if ((raw.includes("ютуб") || raw.includes("youtube")) && raw.includes("пуск")) cmd = "/yt_go";
+    else if (raw.includes("статус")) cmd = "/status";
     else if (raw.includes("очередь")) cmd = "/queue";
     else if (raw.includes("сводка")) cmd = "/today";
     else if (raw.includes("как дела")) cmd = "/health";
@@ -331,6 +334,59 @@ async function handleCommand(
       body: JSON.stringify({
         chat_id: msg.chat.id, text: текст,
         reply_markup: ownerKeyboard(нов),
+      }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/yt_queue") {
+    const { data: строки } = await admin.from("youtube_publish_queue")
+      .select("title,status,scheduled_at,youtube_video_id,error")
+      .eq("user_id", uid).order("scheduled_at");
+    const все = строки ?? [];
+    const счёт = (s: string) => все.filter((r) => r.status === s).length;
+    const ближайшие = все.filter((r) => r.status === "scheduled").slice(0, 5)
+      .map((r) => {
+        const д = new Date(r.scheduled_at);
+        const мск = new Date(д.getTime() + 3 * 3600_000);
+        const дд = String(мск.getUTCDate()).padStart(2, "0");
+        const мм = String(мск.getUTCMonth() + 1).padStart(2, "0");
+        const чч = String(мск.getUTCHours()).padStart(2, "0");
+        const мин = String(мск.getUTCMinutes()).padStart(2, "0");
+        return `${дд}.${мм} ${чч}:${мин} — ${r.title}`;
+      });
+    const битые = все.filter((r) => r.status === "failed").slice(0, 3)
+      .map((r) => `• ${r.title}: ${String(r.error ?? "").slice(0, 60)}`);
+    const текст = "📺 Очередь YouTube\n\n" +
+      `Опубликовано: ${счёт("published")}\nЖдут: ${счёт("scheduled")}\n` +
+      `На паузе: ${счёт("draft")}\nСбоев: ${счёт("failed")}\n\n` +
+      (ближайшие.length ? `Ближайшие:\n${ближайшие.join("\n")}` : "Ближайших публикаций нет.") +
+      (битые.length ? `\n\nСбои:\n${битые.join("\n")}` : "") +
+      "\n\nКоманды: «стоп ютуб» — пауза, «пуск ютуб» — продолжить.";
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: msg.chat.id, text: текст }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/yt_stop") {
+    const { data: стало } = await admin.from("youtube_publish_queue")
+      .update({ status: "draft", updated_at: new Date().toISOString() })
+      .eq("user_id", uid).eq("status", "scheduled").select("id");
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: `Остановил очередь YouTube: ${стало?.length ?? 0} роликов на паузе. ` +
+          "Продолжить — «пуск ютуб».",
+      }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/yt_go") {
+    const { data: сколько } = await admin.rpc("youtube_queue_resume", { p_user_id: uid });
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: `Очередь YouTube снова идёт: вернул в расписание ${сколько ?? 0} роликов. ` +
+          "Просроченные развёл по 5 часов, будущие сроки не трогал.",
       }),
     }).catch(() => {});
     return;
