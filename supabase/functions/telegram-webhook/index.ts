@@ -59,9 +59,14 @@ function emojiKey(r: unknown): string | null {
 }
 
 function ownerKeyboard(targetPlatform: string) {
+  // Две площадки двумя кнопками, активная помечена галочкой. Одна кнопка
+  // «Сейчас: …» была непонятна: Татьяна не находила, ГДЕ переключать, и не
+  // видела, ЧТО переключилось. Теперь жмёшь нужную — она и включается.
+  const тг = targetPlatform !== TARGET_PLATFORMS.YOUTUBE_SHORTS;
   return {
     keyboard: [
-      [{ text: `🎯 Сейчас: ${platformLabel(targetPlatform)}` }],
+      [{ text: `${тг ? "✅ " : ""}Телеграм-канал` },
+       { text: `${тг ? "" : "✅ "}YouTube-канал` }],
       [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
       [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
       [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
@@ -121,7 +126,9 @@ async function handleCommand(
     else if (raw.includes("дайджест")) cmd = "/digest";
     else if (raw.includes("входящие")) cmd = "/inbox";
     else if (raw.includes("задание")) cmd = "/task";
-    else if (raw.includes("площадк") || raw.includes("🎯") || raw.includes("youtube shorts")) cmd = "/platform";
+    else if (raw.includes("телеграм-канал")) cmd = "/pf_tg";
+    else if (raw.includes("youtube")) cmd = "/pf_yt";
+    else if (raw.includes("площадк") || raw.includes("🎯")) cmd = "/platform";
     else cmd = "";
   }
 
@@ -308,7 +315,24 @@ async function handleCommand(
   // Если задан — шлём вторым сообщением как блок кода (одно касание = копия)
   let copyBlock: string | null = null;
 
-  if (cmd === "/platform") {
+  if (cmd === "/pf_tg" || cmd === "/pf_yt") {
+    const нов = cmd === "/pf_yt" ? TARGET_PLATFORMS.YOUTUBE_SHORTS : TARGET_PLATFORMS.TIKTOK;
+    await admin.from("profiles").update({ target_platform: нов }).eq("id", uid);
+    const текст = нов === TARGET_PLATFORMS.YOUTUBE_SHORTS
+      ? "Переключила на YouTube-канал: идеи будут строиться по чужим удачным " +
+        "шортсам, а новые ролики вашего канала берутся на учёт сами." + СТРОКА + СТРОКА +
+        "Галочка на кнопке внизу показывает, какой режим включён."
+      : "Переключила на Телеграм-канал: идеи снова свои, из стиля серии." + СТРОКА + СТРОКА +
+        "Галочка на кнопке внизу показывает, какой режим включён.";
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id, text: текст,
+        reply_markup: ownerKeyboard(нов),
+      }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/platform") {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
