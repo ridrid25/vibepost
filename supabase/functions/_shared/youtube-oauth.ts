@@ -3,7 +3,10 @@
 
 export const YOUTUBE_SCOPES = [
   "https://www.googleapis.com/auth/youtube.upload",
-  "https://www.googleapis.com/auth/youtube.readonly",
+  // Полное право управления: снять расписание, скрыть, удалить дубль.
+  // youtube.upload позволяет только заливать — 28.08 не смогли отменить
+  // publishAt через API и застряли в UI студии.
+  "https://www.googleapis.com/auth/youtube",
 ];
 
 export function randomState(): string {
