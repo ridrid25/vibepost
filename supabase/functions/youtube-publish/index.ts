@@ -22,7 +22,21 @@ interface QueueItem {
   storage_bucket: string | null;
   storage_path: string | null;
   video_url: string | null;
+  scheduled_at: string;
   attempts: number;
+}
+
+// Слоты расписания: по 2 в день, 10:00 и 17:00 МСК (07:00 и 14:00 UTC).
+function nextSlot(after: Date): Date {
+  for (const hour of [7, 14]) {
+    const slot = new Date(Date.UTC(
+      after.getUTCFullYear(), after.getUTCMonth(), after.getUTCDate(), hour,
+    ));
+    if (slot > after && slot > new Date()) return slot;
+  }
+  const next = new Date(after);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth(), next.getUTCDate(), 7));
 }
 
 async function freshAccessToken(admin: SupabaseClient, accountId: string): Promise<string> {
@@ -94,7 +108,10 @@ async function uploadToYouTube(
           categoryId: "22",
         },
         status: {
-          privacyStatus: "public",
+          // Скрытая заливка заранее: публикует сам YouTube по publishAt.
+          // До выхода Татьяна вешает музыку в редакторе Studio.
+          privacyStatus: "private",
+          publishAt: new Date(item.scheduled_at).toISOString(),
           selfDeclaredMadeForKids: false,
         },
       }),
@@ -124,7 +141,12 @@ async function uploadToYouTube(
   return putBody.id as string;
 }
 
-async function tellOwner(admin: SupabaseClient, userId: string, text: string) {
+async function tellOwner(
+  admin: SupabaseClient,
+  userId: string,
+  text: string,
+  button?: { text: string; url: string },
+) {
   try {
     const { data: profile } = await admin.from("profiles")
       .select("error_notify_tg_id").eq("id", userId).maybeSingle();
@@ -133,9 +155,19 @@ async function tellOwner(admin: SupabaseClient, userId: string, text: string) {
     await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: profile.error_notify_tg_id, text }),
+      body: JSON.stringify({
+        chat_id: profile.error_notify_tg_id,
+        text,
+        ...(button ? { reply_markup: { inline_keyboard: [[button]] } } : {}),
+      }),
     });
   } catch { /* уведомление не должно ронять публикацию */ }
+}
+
+function мск(iso: string): string {
+  const d = new Date(new Date(iso).getTime() + 3 * 3600_000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getUTCDate())}.${p(d.getUTCMonth() + 1)} в ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
 }
 
 Deno.serve(async (req) => {
@@ -146,11 +178,50 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
+  // Шаг 1. Галочка в приложении создаёт draft — назначаем слот и в расписание.
+  const { data: drafts } = await admin.from("youtube_publish_queue")
+    .select("id, scheduled_at")
+    .eq("status", "draft").not("incoming_video_id", "is", null)
+    .order("scheduled_at");
+  if (drafts?.length) {
+    const { data: tail } = await admin.from("youtube_publish_queue")
+      .select("scheduled_at")
+      .in("status", ["scheduled", "processing", "uploaded"])
+      .order("scheduled_at", { ascending: false }).limit(1);
+    let slot = tail?.[0] ? new Date(tail[0].scheduled_at) : new Date();
+    for (const draft of drafts) {
+      slot = nextSlot(slot);
+      await admin.from("youtube_publish_queue").update({
+        status: "scheduled",
+        scheduled_at: slot.toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", draft.id).eq("status", "draft");
+    }
+  }
+
+  // Шаг 2. Залитые скрытыми, чей срок прошёл, — YouTube уже опубликовал сам.
+  const { data: released } = await admin.from("youtube_publish_queue")
+    .update({ status: "published", updated_at: new Date().toISOString() })
+    .eq("status", "uploaded").lt("scheduled_at", new Date().toISOString())
+    .select("user_id, youtube_video_id, title, scheduled_at");
+  for (const row of released ?? []) {
+    if (!row.youtube_video_id) continue;
+    await admin.from("published_shorts").upsert({
+      user_id: row.user_id,
+      youtube_id: row.youtube_video_id,
+      title: row.title,
+      published_at: row.scheduled_at,
+    }, { onConflict: "youtube_id", ignoreDuplicates: true });
+    await tellOwner(admin, row.user_id,
+      `Вышел на YouTube: «${row.title}»\nhttps://youtube.com/shorts/${row.youtube_video_id}`);
+  }
+
+  // Шаг 3. Заливка в студию — за 48 часов до выхода, скрытым с publishAt.
   const { data: claimed, error: claimError } = await admin
     .rpc("claim_due_youtube_publish", { p_limit: 1 });
   if (claimError) return json(500, { error: claimError.message });
   const item = (Array.isArray(claimed) ? claimed[0] : null) as QueueItem | null;
-  if (!item) return json(200, { done: 0, message: "очередь пуста" });
+  if (!item) return json(200, { done: 0, message: "заливать нечего" });
 
   const fail = async (message: string) => {
     // До 3 попыток: сетевые сбои и 5xx Google переживаем, вернув задание в
@@ -166,7 +237,7 @@ Deno.serve(async (req) => {
     }).eq("id", item.id);
     if (terminal) {
       await tellOwner(admin, item.user_id,
-        `Не смог опубликовать «${item.title}» после 3 попыток: ${message.slice(0, 200)}`);
+        `Не смог залить в студию «${item.title}» после 3 попыток: ${message.slice(0, 200)}`);
     }
     return json(200, { done: 0, failed: item.id, error: message.slice(0, 200) });
   };
@@ -186,23 +257,20 @@ Deno.serve(async (req) => {
     const youtubeId = await uploadToYouTube(accessToken, item, video);
 
     await admin.from("youtube_publish_queue").update({
-      status: "published",
+      status: "uploaded",
       youtube_video_id: youtubeId,
       account_id: accountId,
       error: null,
       updated_at: new Date().toISOString(),
     }).eq("id", item.id);
 
-    // Свежий шортс сразу на учёт — статистика снимается тем же заводом.
-    await admin.from("published_shorts").upsert({
-      user_id: item.user_id,
-      youtube_id: youtubeId,
-      title: item.title,
-      published_at: new Date().toISOString(),
-    }, { onConflict: "youtube_id", ignoreDuplicates: true });
-
-    await tellOwner(admin, item.user_id,
-      `Опубликовал на YouTube: «${item.title}»\nhttps://youtube.com/shorts/${youtubeId}`);
+    await tellOwner(
+      admin,
+      item.user_id,
+      `«${item.title}» повесил в студию, выйдет ${мск(item.scheduled_at)}.\n` +
+        `Осталось подобрать музыку — кнопка ниже, вкладка «Аудио», сохранить.`,
+      { text: "🎵 Подобрать музыку", url: `https://studio.youtube.com/video/${youtubeId}/editor` },
+    );
     return json(200, { done: 1, id: item.id, youtube_video_id: youtubeId });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

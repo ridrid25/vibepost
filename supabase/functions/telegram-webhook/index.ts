@@ -356,8 +356,8 @@ async function handleCommand(
     const битые = все.filter((r) => r.status === "failed").slice(0, 3)
       .map((r) => `• ${r.title}: ${String(r.error ?? "").slice(0, 60)}`);
     const текст = "📺 Очередь YouTube\n\n" +
-      `Опубликовано: ${счёт("published")}\nЖдут: ${счёт("scheduled")}\n` +
-      `На паузе: ${счёт("draft")}\nСбоев: ${счёт("failed")}\n\n` +
+      `Вышло: ${счёт("published")}\nВ студии, ждут выхода: ${счёт("uploaded")}\n` +
+      `В расписании: ${счёт("scheduled")}\nНа паузе: ${счёт("draft")}\nСбоев: ${счёт("failed")}\n\n` +
       (ближайшие.length ? `Ближайшие:\n${ближайшие.join("\n")}` : "Ближайших публикаций нет.") +
       (битые.length ? `\n\nСбои:\n${битые.join("\n")}` : "") +
       "\n\nКоманды: «стоп ютуб» — пауза, «пуск ютуб» — продолжить.";
