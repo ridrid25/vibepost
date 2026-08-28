@@ -126,6 +126,8 @@ async function handleCommand(
     else if (raw.includes("дайджест")) cmd = "/digest";
     else if (raw.includes("входящие")) cmd = "/inbox";
     else if (raw.includes("задание")) cmd = "/task";
+    else if ((raw.includes("подключ") || raw.includes("привяж")) &&
+      (raw.includes("ютуб") || raw.includes("youtube"))) cmd = "/yt_connect";
     else if (raw.includes("тикток") || raw.includes("телеграм-канал")) cmd = "/pf_tg";
     else if (raw.includes("youtube")) cmd = "/pf_yt";
     else if (raw.includes("площадк") || raw.includes("🎯")) cmd = "/platform";
@@ -329,6 +331,37 @@ async function handleCommand(
       body: JSON.stringify({
         chat_id: msg.chat.id, text: текст,
         reply_markup: ownerKeyboard(нов),
+      }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/yt_connect") {
+    // Привязка YouTube-канала: одна кнопка, дальше Google сам ведёт по шагам.
+    const r = await fetch(
+      `${Deno.env.get("SUPABASE_URL")}/functions/v1/youtube-oauth-start`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+        body: JSON.stringify({ user_id: uid }),
+      },
+    );
+    const тело = await r.json().catch(() => ({}));
+    const текст = r.ok && тело.authorization_url
+      ? "Привязываю YouTube-канал. Нажмите кнопку, выберите аккаунт, на котором " +
+        "живёт канал, и разрешите доступ." + СТРОКА + СТРОКА +
+        "Ссылка живёт 10 минут. Если не успели — напишите «подключить ютуб» ещё раз."
+      : `Не смог подготовить ссылку: ${тело.error ?? r.status}. Напишите «подключить ютуб» позже.`;
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id, text: текст,
+        ...(r.ok && тело.authorization_url
+          ? { reply_markup: { inline_keyboard: [[
+              { text: "🔗 Разрешить доступ к YouTube", url: тело.authorization_url },
+            ]] } }
+          : {}),
       }),
     }).catch(() => {});
     return;

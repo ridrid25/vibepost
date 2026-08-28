@@ -1035,3 +1035,42 @@ stop». Ограничено временем — `before 5.45`.
 
 Шапка файла-заметки помечена как перенесённая — следующая сессия не впишет
 правило повторно. Незакрытых долгов по документации нет.
+
+---
+
+## 28.08 день — привязка YouTube-канала: OAuth-публикатор построен
+
+Задание Татьяны: «Давай сделаем привязку… систему разбрасывания этих 32
+роликов, и я просто буду наблюдать». Сделан фундамент — авторизация канала.
+
+**Google Cloud (проект vibefin, аккаунт ridsochi).** Auth Platform настроен:
+App name VibePost, External, Testing. Создан OAuth-клиент Web application
+`vibepost-youtube-publisher` с redirect
+`…/functions/v1/youtube-oauth-callback`. Татьяна добавлена в Test users.
+Client ID/secret — в `.env` и в Supabase secrets
+(`YOUTUBE_OAUTH_CLIENT_ID`/`YOUTUBE_OAUTH_CLIENT_SECRET`), в переписку не
+попадали. По пути клик мимо выпадашки перевёл тип клиента на Android — форма
+пересобрана на Web application до нажатия Create.
+
+**База (миграция `20260828000001_youtube_publisher.sql`, применена).**
+`youtube_accounts` (токены только в Vault, RPC `store/get_youtube_token_bundle`
+по образцу TikTok), `youtube_oauth_states` (одноразовый хэшированный state,
+RPC `consume_youtube_oauth_state`), `youtube_publish_queue` — очередь под
+воркер с `for update skip locked`.
+
+**Функции.** `youtube-oauth-start` (зовут фронт с JWT или webhook с
+service_role; роль читается из payload уже проверенного шлюзом JWT — сравнение
+строк с env-ключом ломалось) и `youtube-oauth-callback` (verify_jwt=false,
+защита state-ом; меняет code на токены, находит канал через `channels?mine`,
+кладёт bundle в Vault, требует youtube.upload и refresh_token, подтверждение
+шлёт в Telegram). Обе задеплоены и проверены: start отдаёт ссылку Google с
+нужными scope, callback без state отвечает своим HTML 400.
+
+**Бот.** Команда «подключить ютуб» (`/yt_connect`) — бот присылает кнопку
+«Разрешить доступ к YouTube»; ссылка живёт 10 минут, новую даёт та же команда.
+Кнопка отправлена Татьяне, ждём её «разрешаю».
+
+**Дальше.** (1) Её авторизация → строка в `youtube_accounts` со статусом
+active; (2) воркер `youtube-publish`: срочные задания из очереди, файл из
+storage, resumable upload; (3) загрузка 32 ТикТок-роликов из «3 Ушло в
+постинг» в storage и расписание: 4 лидера сразу, дальше 1–2 в день.
