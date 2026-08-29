@@ -478,6 +478,25 @@ async function записатьЗамер(id, ч) {
     `&select=name,user_id,idea_id,target_platform,causal_pattern`, { headers: h },
   )).json().catch(() => [null]);
   if (!ролик) return;
+
+  // Эталон едет в КАЖДУЮ переделку: без него дежурный чинит по голым цифрам
+  // и с каждым дублем уезжает от того, что реально собрало миллионы.
+  let эталон = '';
+  if (ролик.idea_id) {
+    const [идея] = await (await fetch(
+      `${url}/rest/v1/video_ideas?id=eq.${ролик.idea_id}` +
+      `&select=reference_title,reference_source_url,reference_views,payoff_class`,
+      { headers: h },
+    )).json().catch(() => [null]);
+    if (идея?.reference_source_url) {
+      эталон = ` ЭТАЛОН ИЗ YOUTUBE — ролик построен по нему, чинить с оглядкой ` +
+        `на его сцену и развязку, а не только на цифры: ` +
+        `«${(идея.reference_title ?? '').slice(0, 60)}» ${идея.reference_source_url}` +
+        `${идея.reference_views ? `, ${идея.reference_views} просмотров` : ''}` +
+        `${идея.payoff_class ? `, развязка: ${идея.payoff_class}` : ''}.`;
+    }
+  }
+
   await fetch(`${url}/rest/v1/claude_tasks`, {
     method: 'POST', headers: h,
     body: JSON.stringify({
@@ -486,7 +505,8 @@ async function записатьЗамер(id, ч) {
         `худшая секунда ${ч.худшая} (норма ${НОРМА_ХУДШАЯ})` +
         `${ч.совет ? `, провал на ${ч.совет} с` : ''}. ` +
         `Перепиши промт ролика «${ролик.name}» сам и пришли новый. ` +
-        `Татьяну про нормы не спрашивать.` +
+        `Заказчицу про нормы не спрашивать.` +
+        эталон +
         (ролик.target_platform === 'youtube_shorts' && ролик.causal_pattern
           ? ` TRUSTED INTERNAL METADATA: target_platform=youtube_shorts; ` +
             `causal_pattern=${JSON.stringify(ролик.causal_pattern)}. Сохранить ` +
