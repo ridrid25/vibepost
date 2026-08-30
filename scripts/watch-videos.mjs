@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Папка-приёмник роликов для VibePost.
  *
  * Рабочий стол → «Ролики VibePost»:
@@ -733,7 +733,7 @@ async function подтвердитьДоделки() {
     // двух столбцов PostgREST не умеет, поэтому отбираем здесь.
     const все = await (await fetch(
       `${url}/rest/v1/incoming_videos?status=eq.rework` +
-      `&select=id,name,rework_note,rework_at,rework_ack_at&order=rework_at&limit=20`,
+      `&select=id,name,user_id,idea_id,rework_note,rework_at,rework_ack_at&order=rework_at&limit=20`,
       { headers: h },
     )).json();
     новые = Array.isArray(все)
@@ -746,6 +746,25 @@ async function подтвердитьДоделки() {
   if (!Array.isArray(новые) || !новые.length) return;
 
   for (const в of новые) {
+    // Замечание из ПРИЛОЖЕНИЯ должно рождать задание дежурному, как и из
+    // бота. С 04.08 этот путь только отвечал «принял» и молчал дальше —
+    // 30.08 заказчица написала две доделки из VibePost, и промты не пришли.
+    const задание = await fetch(`${url}/rest/v1/claude_tasks`, {
+      method: 'POST', headers: h,
+      body: JSON.stringify({
+        user_id: в.user_id,
+        video_id: в.id,
+        idea_id: в.idea_id ?? null,
+        text: `Замечание заказчицы из VibePost по ролику «${в.name}»: ` +
+          `${в.rework_note ?? 'без пояснения'}`,
+      }),
+    }).catch(() => null);
+    if (!задание || !задание.ok) {
+      // Задание не записалось — квитанцию не ставим, чтобы доделка не
+      // спряталась: возьмём её на следующем тике.
+      console.log(`[доделка] задание не записалось, отложил: ${в.name}`);
+      continue;
+    }
     await вБота(
       `↩︎ Принял замечание по ролику «${в.name}»:\n\n` +
       `«${в.rework_note ?? 'без пояснения'}»\n\n` +
@@ -755,7 +774,7 @@ async function подтвердитьДоделки() {
       method: 'PATCH', headers: h,
       body: JSON.stringify({ rework_ack_at: new Date().toISOString() }),
     }).catch(() => {});
-    console.log(`[доделка] подтвердил: ${в.name}`);
+    console.log(`[доделка] подтвердил и завёл задание: ${в.name}`);
   }
 }
 
