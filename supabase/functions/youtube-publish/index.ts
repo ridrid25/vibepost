@@ -178,26 +178,9 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  // Шаг 1. Галочка в приложении создаёт draft — назначаем слот и в расписание.
-  const { data: drafts } = await admin.from("youtube_publish_queue")
-    .select("id, scheduled_at")
-    .eq("status", "draft").not("incoming_video_id", "is", null)
-    .order("scheduled_at");
-  if (drafts?.length) {
-    const { data: tail } = await admin.from("youtube_publish_queue")
-      .select("scheduled_at")
-      .in("status", ["scheduled", "processing", "uploaded"])
-      .order("scheduled_at", { ascending: false }).limit(1);
-    let slot = tail?.[0] ? new Date(tail[0].scheduled_at) : new Date();
-    for (const draft of drafts) {
-      slot = nextSlot(slot);
-      await admin.from("youtube_publish_queue").update({
-        status: "scheduled",
-        scheduled_at: slot.toISOString(),
-        updated_at: new Date().toISOString(),
-      }).eq("id", draft.id).eq("status", "draft");
-    }
-  }
+  // Галочка сама НИЧЕГО не заливает (решение заказчицы 29.08): ролик уходит в
+  // расписание только после её выбора музыки — статус scheduled ставит микшер,
+  // когда вшил выбранный отрывок. Драфты здесь не трогаем.
 
   // Шаг 2. Залитые скрытыми, чей срок прошёл, — YouTube уже опубликовал сам.
   const { data: released } = await admin.from("youtube_publish_queue")
