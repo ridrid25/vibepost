@@ -1195,3 +1195,14 @@ published_shorts. Статус uploaded добавлен в check, захват 
 карточкой YoutubeFeedCard; добавь "YouTube" в выбор каналов диалога нового
 поста (insert в youtube_publish_queue со status draft); проверь 360px».
 Опубликовано как есть на vibepost-new.lovable.app.
+
+**30.08: VibePost переехал на основной аккаунт — распутан клубок из трёх.**
+Призрак «visual edits» оказался серверным и привязанным к аккаунту ridrusia
+(стрелял даже в инкогнито; под ridsochi — никогда). По решению заказчицы
+проект ремикснут в воркспейс ridsochi «Татьяна''s Lovable» (id 7bbd2125…),
+опубликован на ОКОНЧАТЕЛЬНОМ адресе https://moy-vibepost.lovable.app
+(слаг vibepost занят), VIBEPOST_APP_ORIGIN переключён. Владелец теперь
+ridsochi = моё MCP-подключение видит проект напрямую. Кредиты — дневные 5
+воркспейса ridsochi. Старые проекты (VibePost Scheduler у jaykayal, vibepost
+у ridrusia) не обновляются; удалит заказчица сама после проверки. Правило
+неизменно: промты в Lovable отправляет только она.
