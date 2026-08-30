@@ -183,19 +183,30 @@ Deno.serve(async (req) => {
   // когда вшил выбранный отрывок. Драфты здесь не трогаем.
 
   // Шаг 2. Залитые скрытыми, чей срок прошёл, — YouTube уже опубликовал сам.
-  const { data: released } = await admin.from("youtube_publish_queue")
-    .update({ status: "published", updated_at: new Date().toISOString() })
-    .eq("status", "uploaded").lt("scheduled_at", new Date().toISOString())
-    .select("user_id, youtube_video_id, title, scheduled_at");
-  for (const row of released ?? []) {
-    if (!row.youtube_video_id) continue;
-    await admin.from("published_shorts").upsert({
-      user_id: row.user_id,
-      youtube_id: row.youtube_video_id,
-      title: row.title,
-      published_at: row.scheduled_at,
-    }, { onConflict: "youtube_id", ignoreDuplicates: true });
-    await tellOwner(admin, row.user_id,
+  // RPC атомарно сохраняет известную lineage и только затем меняет status.
+  // Ошибка оставляет строку uploaded: следующий вызов повторяет только metadata,
+  // а claim ниже никогда не загрузит тот же ролик второй раз.
+  const { data: dueRelease, error: dueReleaseError } = await admin
+    .from("youtube_publish_queue")
+    .select("id")
+    .eq("status", "uploaded").lt("scheduled_at", new Date().toISOString());
+  if (dueReleaseError) {
+    console.error("youtube release scan failed", { code: "YOUTUBE_RELEASE_SCAN_FAILED" });
+  }
+  for (const candidate of dueRelease ?? []) {
+    const { data, error } = await admin.rpc("release_youtube_publication_lineage", {
+      p_queue_id: candidate.id,
+    });
+    if (error) {
+      console.error("youtube release lineage failed", {
+        id: candidate.id,
+        code: "YOUTUBE_RELEASE_LINEAGE_FAILED",
+      });
+      continue;
+    }
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row || row.deduplicated) continue;
+    await tellOwner(admin, row.owner_id,
       `Вышел на YouTube: «${row.title}»\nhttps://youtube.com/shorts/${row.youtube_video_id}`);
   }
 
