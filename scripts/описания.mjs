@@ -29,12 +29,38 @@ if (!id || варианты.length < 2) {
   console.error('нужно: описания.mjs <queue_id> "вариант 1" "вариант 2" ["вариант 3"]');
   process.exit(2);
 }
-const r = await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${id}`, {
-  method: 'PATCH', headers: h,
+// С 31.08 описание — свойство ролика (годится всем площадкам): пишем в
+// incoming_videos. Старые задания ссылаются на id очереди — принимаем оба:
+// сперва пробуем ролик, потом очередь.
+const кРолику = await fetch(
+  `${url}/rest/v1/incoming_videos?id=eq.${id}`,
+  { method: 'PATCH', headers: { ...h, Prefer: 'return=representation' },
+    body: JSON.stringify({ description_options: варианты }) },
+);
+const строкиРолика = кРолику.ok ? await кРолику.json() : [];
+if (Array.isArray(строкиРолика) && строкиРолика.length) {
+  console.log(`записано в карточку ролика, вариантов: ${варианты.length}`);
+  process.exit(0);
+}
+const кОчереди = await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${id}`, {
+  method: 'PATCH', headers: { ...h, Prefer: 'return=representation' },
   body: JSON.stringify({
     description_options: варианты,
     updated_at: new Date().toISOString(),
   }),
 });
-console.log(r.ok ? `записано вариантов: ${варианты.length}` : `ошибка: ${r.status}`);
-process.exitCode = r.ok ? 0 : 1;
+const строкиОчереди = кОчереди.ok ? await кОчереди.json() : [];
+if (Array.isArray(строкиОчереди) && строкиОчереди.length) {
+  console.log(`записано в очередь, вариантов: ${варианты.length}`);
+  // Продублируем на связанный ролик, если он есть.
+  const св = строкиОчереди[0].incoming_video_id;
+  if (св) {
+    await fetch(`${url}/rest/v1/incoming_videos?id=eq.${св}`, {
+      method: 'PATCH', headers: h,
+      body: JSON.stringify({ description_options: варианты }),
+    }).catch(() => {});
+  }
+  process.exit(0);
+}
+console.error('не нашёл ни ролика, ни строки очереди с таким id');
+process.exit(1);

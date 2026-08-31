@@ -1079,27 +1079,20 @@ async function заказатьОписания() {
     )).json();
     if (Array.isArray(открытых) && открытых.length >= 2) return;
 
+    // С 31.08 описание — свойство РОЛИКА (одно на все площадки): источник —
+    // карточки «Входящих», принятые или свежие, без сочинённых вариантов.
     строки = await (await fetch(
-      `${url}/rest/v1/youtube_publish_queue?description_options=is.null` +
-      `&status=in.(draft,scheduled)&storage_path=not.is.null` +
-      `&select=id,user_id,title,description,storage_path` +
-      `&order=scheduled_at.asc&limit=1`,
+      `${url}/rest/v1/incoming_videos?description_options=is.null` +
+      `&status=in.(new,scheduled)&video_url=not.is.null` +
+      `&select=id,user_id,name,video_url&order=created_at.desc&limit=1`,
       { headers: h },
     )).json();
   } catch { return; }
   if (!Array.isArray(строки) || !строки.length) return;
 
   for (const с of строки) {
-    // Личное описание уже написано — варианты не нужны, ставим отметку.
-    const дефолтное = !с.description || с.description.startsWith('Финансовый юмор в мире зверей');
-    if (!дефолтное) {
-      await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${с.id}`, {
-        method: 'PATCH', headers: h,
-        body: JSON.stringify({ description_options: [] }),
-      }).catch(() => {});
-      continue;
-    }
-    const видео = `${url}/storage/v1/object/public/post-photos/${с.storage_path}`;
+    с.title = с.name;
+    const видео = с.video_url;
     const задание = await fetch(`${url}/rest/v1/claude_tasks`, {
       method: 'POST', headers: h,
       body: JSON.stringify({
@@ -1115,7 +1108,7 @@ async function заказатьОписания() {
       }),
     }).catch(() => null);
     if (задание && задание.ok) {
-      await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${с.id}`, {
+      await fetch(`${url}/rest/v1/incoming_videos?id=eq.${с.id}`, {
         method: 'PATCH', headers: h,
         body: JSON.stringify({ description_options: [] }),
       }).catch(() => {});

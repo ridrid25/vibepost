@@ -246,6 +246,15 @@ Deno.serve(async (req) => {
       accountId = account.id;
     }
 
+    // Описание — свойство ролика (31.08): выбранный заказчицей текст на
+    // карточке главнее заготовки очереди.
+    const itemAny = item as unknown as { incoming_video_id?: string | null };
+    if (itemAny.incoming_video_id) {
+      const { data: clip } = await admin.from("incoming_videos")
+        .select("post_description").eq("id", itemAny.incoming_video_id).maybeSingle();
+      if (clip?.post_description) item.description = clip.post_description;
+    }
+
     const accessToken = await freshAccessToken(admin, accountId);
     const video = await downloadVideo(admin, item);
     const youtubeId = await uploadToYouTube(accessToken, item, video);
