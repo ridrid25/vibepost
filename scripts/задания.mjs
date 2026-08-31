@@ -242,8 +242,6 @@ if (команда === 'список') {
     throw new Error(`промпт ${компакт.length} знаков — предел 4096, сокращать.`);
   }
   const блок = `<pre>${экран(компакт)}</pre>`;
-  await бот(экран(шапка), 'HTML');
-  await бот(блок, 'HTML');
   if (taskId) {
     const taskResponse = await fetch(
       `${url}/rest/v1/claude_tasks?id=eq.${taskId}` +
@@ -254,27 +252,29 @@ if (команда === 'список') {
     const [task] = await taskResponse.json();
     if (task?.idea_id) {
       const targetPlatform = task.video_ideas?.target_platform ?? 'tiktok';
-      const saveResponse = targetPlatform === 'tiktok'
-        ? await fetch(`${url}/rest/v1/rpc/persist_tiktok_prompt_provenance`, {
-          method: 'POST', headers: h,
-          body: JSON.stringify({
-            p_mode: 'CLAUDE_TASK',
-            p_video_idea_id: task.idea_id,
-            p_claude_task_id: taskId,
-            p_prompt: компакт,
-            p_prompt_hash: createHash('sha256').update(компакт, 'utf8').digest('hex'),
-          }),
-        })
-        : await fetch(`${url}/rest/v1/video_ideas?id=eq.${task.idea_id}`, {
-          method: 'PATCH', headers: h,
-          body: JSON.stringify({
-            prompt: компакт,
-            generated_prompt_at: new Date().toISOString(),
-          }),
-        });
-      if (!saveResponse.ok) throw new Error('промпт отправлен, но не записался в video_ideas');
+      if (!['tiktok', 'youtube_shorts'].includes(targetPlatform)) {
+        throw new Error('неподдерживаемая площадка prompt provenance');
+      }
+      // POST-05 extends the accepted POST-04 RPC in place. YouTube now gets
+      // the same owner-gated, hash-checked, idempotent provenance boundary;
+      // direct PATCH can no longer bypass the creative/evidence chain.
+      const saveResponse = await fetch(`${url}/rest/v1/rpc/persist_tiktok_prompt_provenance`, {
+        method: 'POST', headers: h,
+        body: JSON.stringify({
+          p_mode: 'CLAUDE_TASK',
+          p_video_idea_id: task.idea_id,
+          p_claude_task_id: taskId,
+          p_prompt: компакт,
+          p_prompt_hash: createHash('sha256').update(компакт, 'utf8').digest('hex'),
+        }),
+      });
+      if (!saveResponse.ok) throw new Error('prompt provenance не сохранился; отправка заблокирована');
     }
   }
+  // A selected-task prompt is delivered only after its canonical provenance
+  // has committed. Standalone operator blocks (without --task) keep the old flow.
+  await бот(экран(шапка), 'HTML');
+  await бот(блок, 'HTML');
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
   console.log('команды: список | взять [кто] | ролик <файл> [id-ролика] \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [--task <id>] [подпись]');

@@ -78,7 +78,22 @@ function trustedTaskContext(
     payoff_class: idea.payoff_class ?? null,
     critical_fidelity_constraints: idea.fidelity_constraints ?? null,
   };
-  return `TRUSTED INTERNAL METADATA: ${JSON.stringify(metadata)}. ` +
+  const ownPerformance = {
+    source_type: "OWN_PERFORMANCE",
+    creative_id: "resolved only by canonical creative_identity_map at prompt persistence",
+    hypothesis_id: idea.hypothesis_id ?? null,
+    experiment_ids: idea.own_experiment_ids ?? [],
+    selected_lesson_ids: idea.selected_lesson_ids ?? [],
+    avoided_lesson_ids: idea.avoided_lesson_ids ?? [],
+    changed_variable: idea.changed_variable ?? null,
+    constants: idea.experiment_constants ?? {},
+    evidence: learningEvidence ?? { selected_lessons: [], avoided_patterns: [] },
+  };
+  return `TRUSTED MARKET_REFERENCE: ${JSON.stringify(metadata)}. ` +
+    `TRUSTED OWN_PERFORMANCE: ${JSON.stringify(ownPerformance)}. ` +
+    `OWNER_PREFERENCE (не performance evidence): ${JSON.stringify(ownerPreference ?? {
+      source_type: "OWNER_PREFERENCE", approved: [], rejected: [],
+    })}. Evidence conflicts: ${JSON.stringify(idea.evidence_conflicts ?? [])}. ` +
     `Для reference-driven идеи causal_pattern, beat order, viewer prediction, ` +
     `violation class, escalation и payoff class сохранить. Source character, ` +
     `dialogue, plot, shots, branding и creator identity не копировать. Финальный ` +
@@ -86,16 +101,18 @@ function trustedTaskContext(
     `герой и prop/mechanism, ясный visual payoff, короткая русская реплика.`;
 }
 
-async function ownerPreferenceContext(admin: SupabaseClient, userId: string, excludeIdeaId: string) {
+async function ownerPreferenceContext(
+  admin: SupabaseClient, userId: string, excludeIdeaId: string, targetPlatform: string,
+) {
   const { data: approved, error: approvedError } = await admin.from("video_ideas")
     .select("id,status,route,decided_at,animal,hook")
-    .eq("user_id", userId).eq("target_platform", "tiktok")
+    .eq("user_id", userId).eq("target_platform", targetPlatform)
     .not("decided_at", "is", null).neq("id", excludeIdeaId)
     .in("route", ["self", "paid"]).in("status", ["approved", "generating", "done"])
     .order("decided_at", { ascending: false }).order("id").limit(10);
   const { data: rejected, error: rejectedError } = await admin.from("video_ideas")
     .select("id,status,route,decided_at,animal,hook")
-    .eq("user_id", userId).eq("target_platform", "tiktok")
+    .eq("user_id", userId).eq("target_platform", targetPlatform)
     .not("decided_at", "is", null).neq("id", excludeIdeaId)
     .is("route", null).eq("status", "rejected")
     .order("decided_at", { ascending: false }).order("id").limit(10);
@@ -423,7 +440,7 @@ ${выбранная}
   }
 
   const { data: idea } = await admin
-    .from("video_ideas").select("id,user_id,status,route,decided_at,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints,hypothesis_id,selected_lesson_ids,avoided_lesson_ids,changed_variable,experiment_constants,prompt_framework_id,prompt_framework_version,feedback_context_hash")
+    .from("video_ideas").select("id,user_id,status,route,decided_at,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints,hypothesis_id,selected_lesson_ids,avoided_lesson_ids,changed_variable,experiment_constants,prompt_framework_id,prompt_framework_version,feedback_context_hash,youtube_feedback_context_hash,own_experiment_ids,market_reference_ids,evidence_roots,evidence_conflicts,idea_confidence,evidence_mode")
     .eq("id", ideaId).eq("user_id", profile.id).maybeSingle();
   if (!idea) {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Идея не найдена" });
@@ -438,10 +455,26 @@ ${выбранная}
   };
   const решение = решения[action];
   if (!решение) return json(200, { ok: true });
-  const ownerPreference = idea.target_platform === "tiktok"
-    ? await ownerPreferenceContext(admin, idea.user_id, idea.id)
+  if (["self", "pay"].includes(action) && idea.target_platform === "youtube_shorts") {
+    const { data: mapping, error: mappingError } = await admin.from("creative_identity_map")
+      .select("id,creative_id").eq("user_id", idea.user_id)
+      .eq("platform", "youtube_shorts").eq("video_idea_id", idea.id).maybeSingle();
+    if (mappingError || !mapping) {
+      await tg("answerCallbackQuery", {
+        callback_query_id: cq.id, text: "Сначала нужен Creative Handoff",
+      });
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text: "Промт не создаю: у идеи ещё нет принятой связи с Text Factory revision. " +
+          "Сначала выполните существующий Creative Handoff; identity не угадывается.",
+      });
+      return json(200, { ok: true, blocked: "youtube_creative_mapping_required" });
+    }
+  }
+  const ownerPreference = ["tiktok", "youtube_shorts"].includes(idea.target_platform)
+    ? await ownerPreferenceContext(admin, idea.user_id, idea.id, idea.target_platform)
     : null;
-  const learningEvidence = idea.target_platform === "tiktok"
+  const learningEvidence = ["tiktok", "youtube_shorts"].includes(idea.target_platform)
     ? await feedbackEvidenceContext(admin, idea.user_id, idea)
     : null;
 
@@ -511,7 +544,7 @@ ${выбранная}
   // за пустой запрос. Ждём промт, потом её подтверждение.
   if (action === "pay") {
     if (idea.prompt) {
-      if (idea.target_platform === "tiktok") {
+      if (["tiktok", "youtube_shorts"].includes(idea.target_platform)) {
         const { error: provenanceError } = await admin.rpc("persist_tiktok_prompt_provenance", {
           p_mode: "OWNER_SELECTED_EXISTING",
           p_video_idea_id: idea.id,

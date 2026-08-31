@@ -12,7 +12,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 |---|---|
 | P1 Cross-System Creative Identity | Store platform-neutral references from POST-01 `creative_id` to idea/incoming/publication rows; resolve, never copy, existing metrics. |
 | P2 TikTok Feedback-to-Idea | POST-04 `PASS/ACCEPTED`: existing lessons feed a deterministic context, one evidence-bound hypothesis and candidate ideas; explicit owner choice gates the existing prompt path. |
-| P3 YouTube Own-Content Learning | Feed own `published_shorts` evidence through the existing experiment/verdict/lesson semantics only after P7 defines the YouTube-aware evaluator. |
+| P3 YouTube Own-Content Learning | POST-05 `PASS/ACCEPTED`: own `published_shorts_stats` feed the existing experiment/analysis/lesson memory through a narrow YouTube metric adapter and continue into an owner-gated idea/prompt. |
 | P4 TikTok Market Intelligence | Accept separate lawful market-evidence adapters only after research/approval; never mix it with own-account evidence. |
 | P5 Parent/Mutation Lineage | Add explicit parent and changed-variable lineage through a separate accepted contract. |
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
@@ -26,6 +26,12 @@ The narrow `Feedback Context Builder` reads the existing TikTok lessons, conclus
 
 TikTok sync, verdict/promotion logic, collectors and metric stores remain unchanged. YouTube, market evidence, lesson decay, business attribution and full parent lineage remain future priorities. Generator settings and production behavior remain protected.
 
+## POST-05 P3 boundary
+
+The existing learning tables now accept an additive YouTube publication subject without fake TikTok rows. `published_shorts_stats` remains the sole owner-metrics snapshot store; the adapter preserves absent supported metrics as `UNKNOWN`, marks unavailable metrics `UNSUPPORTED`, selects deterministic checkpoints without interpolation and returns the shared `PASS / FAIL / INCONCLUSIVE` verdict semantics. A conclusive result writes the existing `content_analysis_results` and `content_lessons`; one experiment remains only `HYPOTHESIS/LOW` under the unchanged promotion rules.
+
+The next YouTube feedback context keeps `MARKET_REFERENCE` (Reference DNA), `OWN_PERFORMANCE` (own publications, experiments and lessons) and `OWNER_PREFERENCE` as distinct provenance roots. Exact market-vs-own pattern conflicts are retained and lower confidence. Candidate cards still require the owner's explicit choice, and the selected prompt is committed through the existing provenance RPC before delivery or any paid start. Generator, OAuth/upload/scheduling/retry and live collectors are unchanged. P4 is not started.
+
 ## Do not build
 
 - no Creative Memory database;
@@ -37,4 +43,4 @@ TikTok sync, verdict/promotion logic, collectors and metric stores remain unchan
 - no metric copying into identity rows;
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
-Repository implementation/evidence for POST-04 is coordinated from `POST_04_TIKTOK_FEEDBACK_LOOP.md` in Text Factory.
+Repository implementation/evidence for POST-05 is coordinated from `POST_05_YOUTUBE_OWN_LEARNING.md` in Text Factory.

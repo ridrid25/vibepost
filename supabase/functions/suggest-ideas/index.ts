@@ -25,6 +25,11 @@ import {
   formatTikTokFeedbackPromptContext,
   validateTikTokCandidates,
 } from "../_shared/tiktok-feedback-context.mjs";
+import {
+  annotateYoutubeCandidates,
+  buildYoutubeFeedbackContext,
+  youtubeFeedbackBatchKey,
+} from "../_shared/youtube-own-learning.mjs";
 
 const REGION = "us-central1";
 const MODEL = "gemini-2.5-flash";
@@ -243,6 +248,84 @@ async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
   };
 }
 
+async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) {
+  const pageSize = 500;
+  const collectPages = async (fetchPage: (from: number, to: number) => Promise<any>) => {
+    const rows: Array<Record<string, any>> = [];
+    for (let from = 0;; from += pageSize) {
+      const { data, error } = await fetchPage(from, from + pageSize - 1);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < pageSize) return rows;
+    }
+  };
+  const inChunks = async (ids: string[], fetchChunk: (chunk: string[], from: number, to: number) => Promise<any>) => {
+    const rows: Array<Record<string, any>> = [];
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const chunk = ids.slice(offset, offset + 100);
+      rows.push(...await collectPages((from, to) => fetchChunk(chunk, from, to)));
+    }
+    return rows;
+  };
+  const lessons = await collectPages((from, to) => admin.from("content_lessons").select("*")
+    .eq("user_id", userId).eq("source_platform", "youtube_shorts").range(from, to));
+  const bindings = await collectPages((from, to) => admin.from("content_lesson_youtube_publications")
+    .select("*").eq("user_id", userId).range(from, to));
+  const citedIds = [...new Set([
+    ...lessons.flatMap((lesson) => (Array.isArray(lesson.evidence) ? lesson.evidence : [])
+      .map((entry) => entry?.experiment_id)),
+    ...bindings.map((row) => row.experiment_id),
+  ].filter((value) => typeof value === "string"))];
+  const citedExperiments = await inChunks(citedIds, (chunk, from, to) => admin.from("experiments")
+    .select("*").eq("user_id", userId).eq("platform", "youtube_shorts")
+    .in("id", chunk).range(from, to));
+  const { data: recentExperiments, error: recentError } = await admin.from("experiments").select("*")
+    .eq("user_id", userId).eq("platform", "youtube_shorts")
+    .order("updated_at", { ascending: false }).order("id").limit(10);
+  if (recentError) throw recentError;
+  const experiments = [...new Map([...citedExperiments, ...(recentExperiments ?? [])]
+    .map((row) => [row.id, row])).values()];
+  const experimentIds = experiments.map((row) => row.id);
+  const analyses = await inChunks(experimentIds, (chunk, from, to) => admin
+    .from("content_analysis_results").select("*").eq("user_id", userId)
+    .eq("platform", "youtube_shorts").in("experiment_id", chunk)
+    .order("created_at", { ascending: false }).range(from, to));
+  const publicationIds = [...new Set(experiments.flatMap((row) =>
+    [row.control_youtube_short_id, row.variant_youtube_short_id]).filter(Boolean))];
+  const publications = await inChunks(publicationIds, (chunk, from, to) => admin
+    .from("published_shorts").select("*").eq("user_id", userId).in("id", chunk).range(from, to));
+  const snapshots = await inChunks(publicationIds, (chunk, from, to) => admin
+    .from("published_shorts_stats").select("*").eq("user_id", userId)
+    .in("short_id", chunk).order("polled_at", { ascending: false }).range(from, to));
+  const mappings = await inChunks(publicationIds, (chunk, from, to) => admin
+    .from("creative_identity_map").select("id,creative_id,video_idea_id,youtube_short_row_id")
+    .eq("user_id", userId).eq("platform", "youtube_shorts")
+    .in("youtube_short_row_id", chunk).range(from, to));
+  const [framework, approved, rejected, hypotheses] = await Promise.all([
+    admin.from("prompt_framework_versions").select("*,prompt_framework_rules(*)")
+      .eq("user_id", userId).eq("is_current", true).maybeSingle(),
+    admin.from("video_ideas").select("id,target_platform,status,route,decided_at")
+      .eq("user_id", userId).eq("target_platform", "youtube_shorts")
+      .not("decided_at", "is", null).in("route", ["self", "paid"])
+      .in("status", ["approved", "generating", "done"])
+      .order("decided_at", { ascending: false }).order("id").limit(10),
+    admin.from("video_ideas").select("id,target_platform,status,route,decided_at")
+      .eq("user_id", userId).eq("target_platform", "youtube_shorts")
+      .not("decided_at", "is", null).is("route", null).eq("status", "rejected")
+      .order("decided_at", { ascending: false }).order("id").limit(10),
+    admin.from("content_hypotheses").select("id,status,changed_variable,constants,feedback_context,updated_at")
+      .eq("user_id", userId).eq("status", "REJECTED")
+      .order("updated_at", { ascending: false }).order("id").limit(20),
+  ]);
+  for (const result of [framework, approved, rejected, hypotheses]) if (result.error) throw result.error;
+  return {
+    lessons, experiments, analyses, lesson_bindings: bindings,
+    publications, snapshots, mappings, hypotheses: hypotheses.data ?? [],
+    framework: framework.data ?? null,
+    owner_ideas: [...(approved.data ?? []), ...(rejected.data ?? [])],
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
@@ -292,6 +375,8 @@ Deno.serve(async (req) => {
   const targetPlatform = normalizeTargetPlatform(profile.target_platform);
   let feedbackContext: Awaited<ReturnType<typeof buildTikTokFeedbackContext>> | null = null;
   let batchKey: string | null = null;
+  let youtubeFeedbackContext: Awaited<ReturnType<typeof buildYoutubeFeedbackContext>> | null = null;
+  let youtubeBatchKeyValue: string | null = null;
   if (targetPlatform === TARGET_PLATFORMS.TIKTOK) {
     const feedbackInputs = await loadTikTokFeedbackInputs(admin, profile.id);
     feedbackContext = await buildTikTokFeedbackContext({
@@ -312,6 +397,19 @@ Deno.serve(async (req) => {
         });
       }
     }
+  } else if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
+    youtubeBatchKeyValue = await youtubeFeedbackBatchKey(profile.id, requestId);
+    if (!previewOnly) {
+      const { data: replay, error: replayError } = await admin.from("video_ideas")
+        .select("id,animal,hook,line,target_platform,trend_signal,youtube_candidate_index")
+        .eq("user_id", profile.id).eq("youtube_feedback_batch_key", youtubeBatchKeyValue)
+        .order("youtube_candidate_index");
+      if (replayError) throw replayError;
+      if (replay?.length) return json(200, {
+        ok: true, replayed: true, created: 0, existing: replay.length,
+        feedback_outcome: "REPLAY",
+      });
+    }
   }
 
   // Чтобы звери не повторялись — показываем модели, кто уже был
@@ -319,7 +417,7 @@ Deno.serve(async (req) => {
     .from("video_ideas").select("animal").eq("user_id", profile.id).limit(200);
   const занятые = [...new Set((былые ?? []).map((r) => r.animal).filter(Boolean))];
 
-  let ideas: Array<Record<string, string>> = [];
+  let ideas: Array<Record<string, any>> = [];
   let experimentSet: Array<Record<string, unknown>> = [];
   let ideaSource = "existing-gemini";
   try {
@@ -328,6 +426,10 @@ Deno.serve(async (req) => {
         apiKey: Deno.env.get("YOUTUBE_API_KEY"),
       });
       experimentSet = selectYoutubeExperimentSet(candidates, count);
+      const youtubeInputs = await loadYoutubeFeedbackInputs(admin, profile.id);
+      youtubeFeedbackContext = await buildYoutubeFeedbackContext({
+        ...youtubeInputs, market_references: experimentSet,
+      });
     }
   } catch (e) {
     return json(500, { error: `Trend input недоступен: ${e instanceof Error ? e.message : String(e)}` });
@@ -338,6 +440,7 @@ Deno.serve(async (req) => {
     // adaptations plus CONTROL. A live model may rewrite their causal beats,
     // so it is deliberately not placed between trusted DNA and Telegram cards.
     ideas = buildYoutubeApprovedFallback(experimentSet);
+    if (youtubeFeedbackContext) ideas = await annotateYoutubeCandidates(ideas, youtubeFeedbackContext);
     ideaSource = "controller-approved-v0.1";
   } else {
     try {
@@ -394,7 +497,23 @@ Deno.serve(async (req) => {
         ? { why_this_idea: idea.why_this_idea ?? null, idea_pattern: idea.idea_pattern ?? null }
         : {}),
       ...(targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
-        ? trustedIdeaMetadata(candidate)
+        ? {
+          ...trustedIdeaMetadata(candidate),
+          market_reference_ids: idea.market_reference_ids ?? [idea.reference_id],
+          selected_lesson_ids: idea.selected_lesson_ids ?? [],
+          avoided_lesson_ids: idea.avoided_lesson_ids ?? [],
+          own_experiment_ids: idea.own_experiment_ids ?? [],
+          changed_variable: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
+            ? idea.changed_variable ?? null : null,
+          experiment_constants: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
+            ? idea.experiment_constants ?? null : null,
+          why_this_idea: idea.why_this_idea,
+          idea_pattern: `${idea.reference_id ?? "CONTROL"}|${idea.slug}`,
+          evidence_roots: idea.evidence_roots,
+          evidence_conflicts: idea.evidence_conflicts ?? [],
+          idea_confidence: idea.idea_confidence ?? "LOW",
+          evidence_mode: idea.evidence_mode ?? "MARKET_REFERENCE_ONLY",
+        }
         : {}),
     };
   });
@@ -471,6 +590,35 @@ Deno.serve(async (req) => {
         prompt: row.prompt, why_this_idea: row.why_this_idea,
         idea_pattern: row.idea_pattern,
       })),
+    });
+    if (error) throw error;
+    saved = Array.isArray(data) ? data : [];
+  } else if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS && youtubeFeedbackContext &&
+      youtubeBatchKeyValue) {
+    const ownBound = rows.some((row) => row.evidence_mode === "OWN_PERFORMANCE_BOUND") &&
+      youtubeFeedbackContext.hypothesis_candidate;
+    const { data, error } = await admin.rpc("persist_youtube_feedback_batch", {
+      p_user_id: profile.id,
+      p_batch_key: youtubeBatchKeyValue,
+      p_context_hash: youtubeFeedbackContext.context_hash,
+      p_hypothesis_key: ownBound ? youtubeFeedbackContext.hypothesis_key : null,
+      p_hypothesis: ownBound ? {
+        ...youtubeFeedbackContext.hypothesis_candidate,
+        rationale: "Existing YouTube own-performance evidence selected deterministically.",
+        feedback_context: {
+          context_version: youtubeFeedbackContext.context_version,
+          platform: youtubeFeedbackContext.platform,
+          OWN_PERFORMANCE: youtubeFeedbackContext.OWN_PERFORMANCE,
+          MARKET_REFERENCE: youtubeFeedbackContext.MARKET_REFERENCE,
+        },
+      } : null,
+      p_selected_lesson_ids: youtubeFeedbackContext.OWN_PERFORMANCE.selected_lessons
+        .map((row) => row.lesson_id),
+      p_avoided_lesson_ids: youtubeFeedbackContext.OWN_PERFORMANCE.avoided_lessons
+        .map((row) => row.lesson_id),
+      p_prompt_framework_id: youtubeFeedbackContext.OWN_PERFORMANCE.prompt_framework?.id,
+      p_prompt_framework_version: youtubeFeedbackContext.OWN_PERFORMANCE.prompt_framework?.version_label,
+      p_candidates: rows,
     });
     if (error) throw error;
     saved = Array.isArray(data) ? data : [];

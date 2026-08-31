@@ -12,6 +12,8 @@
 // Опрос дёшев: один запрос videos.list на до 50 роликов = 1 единица квоты
 // из 10 000 суточных.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { callerIsServiceRole } from "../_shared/tiktok.ts";
+import { optionalYoutubeCount } from "../_shared/youtube-own-learning.mjs";
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -29,14 +31,26 @@ export function youtubeId(текст: string): string | null {
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!(await callerIsServiceRole(req, serviceKey))) return json(403, { error: "forbidden" });
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    serviceKey,
   );
   const ключ = Deno.env.get("YOUTUBE_API_KEY");
   if (!ключ) return json(500, { error: "YOUTUBE_API_KEY не настроен" });
 
   const body = await req.json().catch(() => ({}));
+  const { data: ownerRaw, error: ownerError } = await admin.rpc("get_secret", {
+    p_name: "vibepost_content_brigade_owner",
+  });
+  const ownerId = !ownerError && typeof ownerRaw === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(ownerRaw)
+    ? ownerRaw : null;
+  if (!ownerId) return json(500, { error: "owner_not_configured" });
+  if (body.user_id !== undefined && body.user_id !== ownerId) {
+    return json(403, { error: "owner_conflict" });
+  }
 
   // ── регистрация нового шорта по ссылке ──────────────────────────────────
   if (body.url) {
@@ -51,22 +65,28 @@ Deno.serve(async (req) => {
     const данные = await r.json();
     const ролик = данные.items?.[0];
     if (!ролик) return json(404, { error: "YouTube такого ролика не знает" });
+    const { data: existingShort, error: existingError } = await admin
+      .from("published_shorts").select("id,user_id").eq("youtube_id", id).maybeSingle();
+    if (existingError) return json(500, { error: existingError.message });
+    if (existingShort && existingShort.user_id !== ownerId) {
+      return json(409, { error: "youtube_publication_owner_conflict" });
+    }
 
     const вышел = ролик.snippet?.publishedAt ?? null;
-    const просмотров = Number(ролик.statistics?.viewCount ?? 0);
+    const просмотров = optionalYoutubeCount(ролик.statistics?.viewCount);
     const часов = вышел
       ? Math.max((Date.now() - new Date(вышел).getTime()) / 3600e3, 0.1)
       : null;
 
     const { error } = await admin.from("published_shorts").upsert({
-      user_id: body.user_id,
+      user_id: ownerId,
       youtube_id: id,
       title: ролик.snippet?.title ?? null,
       published_at: вышел,
       views: просмотров,
-      likes: Number(ролик.statistics?.likeCount ?? 0),
-      comments: Number(ролик.statistics?.commentCount ?? 0),
-      vph: часов ? +(просмотров / часов).toFixed(2) : null,
+      likes: optionalYoutubeCount(ролик.statistics?.likeCount),
+      comments: optionalYoutubeCount(ролик.statistics?.commentCount),
+      vph: часов && просмотров !== null ? +(просмотров / часов).toFixed(2) : null,
       last_polled_at: new Date().toISOString(),
       poll_error: null,
     }, { onConflict: "youtube_id" });
@@ -86,7 +106,7 @@ Deno.serve(async (req) => {
   async function подобратьНовыеСКанала() {
     const { data: профили } = await admin
       .from("profiles").select("id, youtube_channel_id")
-      .not("youtube_channel_id", "is", null);
+      .eq("id", ownerId).not("youtube_channel_id", "is", null);
     let добавлено = 0;
     for (const п of профили ?? []) {
       const кан = await fetch(
@@ -102,13 +122,21 @@ Deno.serve(async (req) => {
       for (const эл of заг?.items ?? []) {
         const vid = эл.snippet?.resourceId?.videoId;
         if (!vid) continue;
+        const { data: existing, error: lookupError } = await admin.from("published_shorts")
+          .select("id,user_id").eq("youtube_id", vid).maybeSingle();
+        if (lookupError) throw lookupError;
+        if (existing?.user_id && existing.user_id !== ownerId) {
+          throw new Error("youtube_publication_owner_conflict");
+        }
+        if (existing) continue;
         const { error } = await admin.from("published_shorts").upsert({
           user_id: п.id,
           youtube_id: vid,
           title: эл.snippet?.title ?? null,
           published_at: эл.snippet?.publishedAt ?? null,
         }, { onConflict: "youtube_id", ignoreDuplicates: true });
-        if (!error) добавлено++;
+        if (error) throw error;
+        добавлено++;
       }
     }
     return добавлено;
@@ -118,7 +146,8 @@ Deno.serve(async (req) => {
   if (body.poll) {
     await подобратьНовыеСКанала();
     const { data: шорты } = await admin
-      .from("published_shorts").select("id, youtube_id, published_at").limit(50);
+      .from("published_shorts").select("id, youtube_id, published_at")
+      .eq("user_id", ownerId).limit(50);
     if (!шорты?.length) return json(200, { ok: true, обновлено: 0 });
 
     const r = await fetch(
@@ -142,23 +171,26 @@ Deno.serve(async (req) => {
           .eq("id", s.id);
         continue;
       }
-      const просмотров = Number(св.statistics?.viewCount ?? 0);
+      const просмотров = optionalYoutubeCount(св.statistics?.viewCount);
+      const лайков = optionalYoutubeCount(св.statistics?.likeCount);
+      const комментариев = optionalYoutubeCount(св.statistics?.commentCount);
       const часов = s.published_at
         ? Math.max((Date.now() - new Date(s.published_at).getTime()) / 3600e3, 0.1)
         : null;
       await admin.from("published_shorts").update({
         views: просмотров,
-        likes: Number(св.statistics?.likeCount ?? 0),
-        comments: Number(св.statistics?.commentCount ?? 0),
-        vph: часов ? +(просмотров / часов).toFixed(2) : null,
+        likes: лайков,
+        comments: комментариев,
+        vph: часов && просмотров !== null ? +(просмотров / часов).toFixed(2) : null,
         last_polled_at: сейчас,
         poll_error: null,
       }).eq("id", s.id);
       await admin.from("published_shorts_stats").insert({
         short_id: s.id,
+        user_id: ownerId,
         views: просмотров,
-        likes: Number(св.statistics?.likeCount ?? 0),
-        comments: Number(св.statistics?.commentCount ?? 0),
+        likes: лайков,
+        comments: комментариев,
       });
       обновлено++;
     }

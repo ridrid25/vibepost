@@ -115,13 +115,16 @@ test('production Telegram wiring keeps existing buttons and does not call Veo in
 test('final prompt is returned by the existing Telegram command and persisted to the selected idea', () => {
   const duty = source('scripts/dezhurny.mjs');
   const tasks = source('scripts/задания.mjs');
+  const migration = source('supabase/migrations/20260831000003_youtube_own_learning.sql');
   assert.match(duty, /промпт <файл\.json> --task <id>/);
   assert.match(tasks, /<pre>\$\{экран\(компакт\)\}<\/pre>/);
-  assert.match(tasks, /video_ideas\?id=eq\.\$\{task\.idea_id\}/);
-  assert.match(tasks, /generated_prompt_at/);
+  assert.match(tasks, /rpc\/persist_tiktok_prompt_provenance/);
+  assert.doesNotMatch(tasks, /video_ideas\?id=eq\.\$\{task\.idea_id\}/);
+  assert.match(migration, /generated_prompt_at=now\(\)/);
   const promptBranch = tasks.slice(tasks.indexOf("команда === 'промпт'"));
   assert.match(promptBranch, /const taskFlag = аргументы\.indexOf\('--task'\)/);
   assert.match(promptBranch, /const taskId = taskFlag >= 0/);
+  assert.ok(promptBranch.indexOf('persist_tiktok_prompt_provenance') < promptBranch.indexOf('await бот(блок'));
 });
 
 test('returned-video review carries causal advisory without taking owner authority', () => {

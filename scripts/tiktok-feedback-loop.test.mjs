@@ -309,13 +309,14 @@ test("YouTube response contract stays outside TikTok feedback additions", () => 
   assert.doesNotMatch(youtubeBranch, /TIKTOK_SCHEMA|why_this_idea|feedbackContext/);
 });
 
-test("prompt save path records TikTok provenance and leaves YouTube path existing", () => {
+test("prompt save path records provenance for both accepted platforms before delivery", () => {
   const tasks = readFileSync("scripts/задания.mjs", "utf8");
   assert.match(tasks, /persist_tiktok_prompt_provenance/);
   assert.match(tasks, /p_mode: 'CLAUDE_TASK'/);
   assert.match(tasks, /createHash\('sha256'\)/);
-  assert.match(tasks, /targetPlatform === 'tiktok'/);
-  assert.match(tasks, /video_ideas\?id=eq\.\$\{task\.idea_id\}/);
+  assert.match(tasks, /\['tiktok', 'youtube_shorts'\]\.includes\(targetPlatform\)/);
+  assert.doesNotMatch(tasks, /video_ideas\?id=eq\.\$\{task\.idea_id\}/);
+  assert.ok(tasks.indexOf("persist_tiktok_prompt_provenance") < tasks.indexOf("await бот(блок"));
 });
 
 test("fixture E2E reaches an owner-selected prompt record with complete provenance", async () => {

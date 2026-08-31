@@ -1,6 +1,11 @@
 // Narrow server-to-server API for Content Brigade v2.
 // Uses a dedicated Vault secret; service_role never leaves Supabase.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import {
+  evaluateYoutubeExperiment,
+  normalizeYoutubeMetricFacts,
+  selectYoutubeCheckpointSnapshot,
+} from "../_shared/youtube-own-learning.mjs";
 
 const STUDIO_FIELDS = [
   "average_watch_time_seconds",
@@ -713,6 +718,137 @@ async function runServerCycle(admin: SupabaseClient, userId: string) {
   });
 }
 
+async function recordYoutubeExperiment(
+  admin: SupabaseClient, userId: string, body: Record<string, unknown>,
+) {
+  for (const key of ["hypothesis_id", "control_short_id", "variant_short_id"]) {
+    if (!isUuid(body[key])) return json(400, { error: `invalid_${key}` });
+  }
+  if (typeof body.changed_variable !== "string" || !isObject(body.constants) ||
+      !isObject(body.success_metrics)) return json(400, { error: "invalid_youtube_experiment" });
+  const { data, error } = await admin.rpc("create_youtube_content_experiment", {
+    p_user_id: userId,
+    p_hypothesis_id: body.hypothesis_id,
+    p_control_short_id: body.control_short_id,
+    p_variant_short_id: body.variant_short_id,
+    p_changed_variable: body.changed_variable,
+    p_constants: body.constants,
+    p_success_metrics: body.success_metrics,
+  });
+  if (error) throw error;
+  return json(200, { ok: true, experiment: data });
+}
+
+async function recordYoutubeAnalysis(
+  admin: SupabaseClient, userId: string, body: Record<string, unknown>,
+) {
+  if (!isUuid(body.experiment_id) || typeof body.checkpoint !== "string") {
+    return json(400, { error: "invalid_youtube_analysis" });
+  }
+  const { data: experiment, error: experimentError } = await admin.from("experiments")
+    .select("*").eq("id", body.experiment_id).eq("user_id", userId)
+    .eq("platform", "youtube_shorts").maybeSingle();
+  if (experimentError) throw experimentError;
+  if (!experiment) return json(404, { error: "youtube_experiment_not_found" });
+  const shortIds = [experiment.control_youtube_short_id, experiment.variant_youtube_short_id];
+  const { data: publications, error: publicationError } = await admin.from("published_shorts")
+    .select("id,user_id,published_at,vph").eq("user_id", userId).in("id", shortIds);
+  if (publicationError) throw publicationError;
+  const { data: snapshots, error: snapshotError } = await admin.from("published_shorts_stats")
+    .select("short_id,user_id,polled_at,views,likes,comments").eq("user_id", userId)
+    .in("short_id", shortIds);
+  if (snapshotError) throw snapshotError;
+  const publicationById = new Map((publications ?? []).map((row) => [row.id, row]));
+  const selected = shortIds.map((shortId) => {
+    const publication = publicationById.get(shortId);
+    const result = selectYoutubeCheckpointSnapshot({
+      published_at: publication?.published_at,
+      snapshots: (snapshots ?? []).filter((row) => row.short_id === shortId),
+      checkpoint: body.checkpoint,
+    });
+    return { shortId, publication, ...result };
+  });
+  const missing = selected.filter((row) => !row.snapshot).map((row) => row.limitation);
+  const control = selected[0].snapshot
+    ? normalizeYoutubeMetricFacts(selected[0].snapshot, selected[0].publication) : {};
+  const variant = selected[1].snapshot
+    ? normalizeYoutubeMetricFacts(selected[1].snapshot, selected[1].publication) : {};
+  const verdict = missing.length ? {
+    conclusion: "INCONCLUSIVE", confidence: "LOW", limitations: missing,
+  } : evaluateYoutubeExperiment({
+    control, variant, success_metrics: experiment.success_metrics,
+    control_material: experiment.control_material_vector,
+    variant_material: experiment.variant_material_vector,
+    changed_variable: experiment.changed_variable, constants: experiment.constants,
+  });
+  // A concrete variant snapshot is required by the reused analysis subject FK.
+  // If it is absent the deterministic verdict is returned but no partial row is written.
+  if (!selected[1].snapshot) return json(200, { ok: true, persisted: false, verdict });
+  const { data, error } = await admin.rpc("persist_youtube_content_analysis", {
+    p_user_id: userId, p_experiment_id: experiment.id,
+    p_short_id: experiment.variant_youtube_short_id,
+    p_snapshot_polled_at: selected[1].snapshot.polled_at,
+    p_checkpoint: body.checkpoint, p_conclusion: verdict.conclusion,
+    p_evidence: [{ control_short_id: experiment.control_youtube_short_id,
+      variant_short_id: experiment.variant_youtube_short_id }],
+    p_metrics: { control, variant },
+    p_metric_sources: {
+      platform: "youtube", store: "published_shorts_stats",
+      control_snapshot: selected[0].snapshot
+        ? { short_id: selected[0].snapshot.short_id, polled_at: selected[0].snapshot.polled_at } : "UNKNOWN",
+      variant_snapshot: { short_id: selected[1].snapshot.short_id, polled_at: selected[1].snapshot.polled_at },
+    },
+    p_confidence: verdict.confidence,
+    p_sample_size: verdict.sample_size ?? {}, p_limitations: verdict.limitations ?? [],
+    p_expected: experiment.success_metrics, p_actual: verdict.actual ?? {},
+  });
+  if (error) throw error;
+  return json(200, { ok: true, persisted: true, verdict, analysis: data });
+}
+
+async function recordYoutubeLesson(
+  admin: SupabaseClient, userId: string, body: Record<string, unknown>,
+) {
+  if (typeof body.lesson !== "string" || !body.lesson.trim() || !Array.isArray(body.evidence)) {
+    return json(400, { error: "invalid_youtube_lesson" });
+  }
+  const evidenceIds = independentEvidenceIds(body.evidence);
+  if (!evidenceIds.length) return json(400, { error: "youtube_lesson_evidence_required" });
+  const { data: analyses, error: analysesError } = await admin.from("content_analysis_results")
+    .select("id,experiment_id,conclusion,created_at").eq("user_id", userId)
+    .eq("platform", "youtube_shorts").in("experiment_id", evidenceIds)
+    .order("created_at", { ascending: false }).order("id");
+  if (analysesError) throw analysesError;
+  const latest = new Map<string, string>();
+  for (const row of analyses ?? []) if (!latest.has(row.experiment_id)) {
+    latest.set(row.experiment_id, row.conclusion);
+  }
+  const conclusions = evidenceIds.map((id) => latest.get(id));
+  if (conclusions.some((value) => !["PASS", "FAIL"].includes(value ?? "")) ||
+      new Set(conclusions).size !== 1) {
+    return json(400, { error: "youtube_lesson_evidence_inconsistent" });
+  }
+  const passed = conclusions[0] === "PASS";
+  let category = "HYPOTHESIS";
+  let status = "HYPOTHESIS";
+  let confidence = "LOW";
+  if (passed && evidenceIds.length >= 2) {
+    category = ["CONFIRMED_LESSON", "WINNING_PATTERN"].includes(String(body.category))
+      ? String(body.category) : "WINNING_PATTERN";
+    status = evidenceIds.length >= 3 ? "CONFIRMED" : "SUPPORTED";
+    confidence = evidenceIds.length >= 3 ? "HIGH" : "MEDIUM";
+  } else if (!passed && evidenceIds.length >= 2) {
+    category = "FAILED_PATTERN"; status = "REJECTED"; confidence = "MEDIUM";
+  }
+  const { data, error } = await admin.rpc("insert_youtube_content_lesson", {
+    p_user_id: userId, p_lesson: body.lesson.trim(), p_category: category,
+    p_evidence: body.evidence, p_confidence: confidence, p_status: status,
+    p_topics: Array.isArray(body.applicable_topics) ? body.applicable_topics : [],
+  });
+  if (error) throw error;
+  return json(200, { ok: true, lesson: data });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
   const presentedSecret = req.headers.get("x-content-brigade-secret");
@@ -756,6 +892,9 @@ Deno.serve(async (req) => {
     if (action === "record_experiment") return await recordExperiment(admin, owner, body);
     if (action === "record_analysis") return await recordAnalysis(admin, owner, body);
     if (action === "record_lesson") return await recordLesson(admin, owner, body);
+    if (action === "record_youtube_experiment") return await recordYoutubeExperiment(admin, owner, body);
+    if (action === "record_youtube_analysis") return await recordYoutubeAnalysis(admin, owner, body);
+    if (action === "record_youtube_lesson") return await recordYoutubeLesson(admin, owner, body);
     if (action === "run_cycle") return await runServerCycle(admin, owner);
     return json(400, { error: "unknown_action" });
   } catch (error) {
