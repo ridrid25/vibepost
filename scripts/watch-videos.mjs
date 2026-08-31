@@ -1055,6 +1055,75 @@ async function полосаПоЗаданиям() {
   }
 }
 
+/**
+ * Умная приставка описаний (30.08). Ролик встал в YouTube-очередь с дефолтным
+ * описанием — дежурный получает задание придумать 3 варианта с подвохом.
+ * Заказчица тыкает один в карточке VibePost. '[]' в description_options —
+ * отметка «задание уже создано», чтобы не заказывать дважды.
+ */
+async function заказатьОписания() {
+  if (!url || !serviceKey) return;
+  const h = {
+    apikey: serviceKey, Authorization: `Bearer ${serviceKey}`,
+    'Content-Type': 'application/json',
+  };
+  let строки;
+  try {
+    // Ограничитель лавины: пока у дежурного лежат незакрытые задания-описания,
+    // новых не заказываем. Иначе 36 черновиков дают 36 заданий за полторы
+    // минуты (тик — 5 секунд, наплодил 12, пока ловили).
+    const открытых = await (await fetch(
+      `${url}/rest/v1/claude_tasks?text=like.*${encodeURIComponent('Придумай описания')}*` +
+      `&status=eq.new&select=id&limit=2`,
+      { headers: h },
+    )).json();
+    if (Array.isArray(открытых) && открытых.length >= 2) return;
+
+    строки = await (await fetch(
+      `${url}/rest/v1/youtube_publish_queue?description_options=is.null` +
+      `&status=in.(draft,scheduled)&storage_path=not.is.null` +
+      `&select=id,user_id,title,description,storage_path` +
+      `&order=scheduled_at.asc&limit=1`,
+      { headers: h },
+    )).json();
+  } catch { return; }
+  if (!Array.isArray(строки) || !строки.length) return;
+
+  for (const с of строки) {
+    // Личное описание уже написано — варианты не нужны, ставим отметку.
+    const дефолтное = !с.description || с.description.startsWith('Финансовый юмор в мире зверей');
+    if (!дефолтное) {
+      await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${с.id}`, {
+        method: 'PATCH', headers: h,
+        body: JSON.stringify({ description_options: [] }),
+      }).catch(() => {});
+      continue;
+    }
+    const видео = `${url}/storage/v1/object/public/post-photos/${с.storage_path}`;
+    const задание = await fetch(`${url}/rest/v1/claude_tasks`, {
+      method: 'POST', headers: h,
+      body: JSON.stringify({
+        user_id: с.user_id,
+        text: `Придумай описания для YouTube-ролика «${с.title}». ` +
+          `Скачай и распознай реплику (python raspoznat.py, файл: ${видео}). ` +
+          `Затем 3 варианта описания, каждый из двух строк: первая — подвох, ` +
+          `продолжающий мысль реплики (НЕ пересказ её и НЕ повтор), вторая — ` +
+          `хэштеги: #shorts #юмор #финансы плюс 2-3 тематических. Запиши их: ` +
+          `node scripts/описания.mjs ${с.id} "вариант 1" "вариант 2" "вариант 3" ` +
+          `(перенос строки внутри варианта — \\n). Заказчице ничего не шли: ` +
+          `варианты сами появятся у неё в приложении.`,
+      }),
+    }).catch(() => null);
+    if (задание && задание.ok) {
+      await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${с.id}`, {
+        method: 'PATCH', headers: h,
+        body: JSON.stringify({ description_options: [] }),
+      }).catch(() => {});
+      console.log(`[описания] заказал дежурному: ${с.title}`);
+    }
+  }
+}
+
 async function присланныеБоту() {
   if (!url || !serviceKey) return;
   const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
@@ -1215,6 +1284,7 @@ async function tick() {
     // Первым делом: подтверждение доделок не должно ждать обработки роликов.
     // Обработка занимает минуты, а Татьяне важно услышать «принял» сразу.
     await подтвердитьДоделки();
+    await заказатьОписания();
     await полосаПоЗаданиям();
     await двигатьПолосу();
     await разбудитьЕслиЖдут();
