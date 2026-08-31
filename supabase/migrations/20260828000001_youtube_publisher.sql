@@ -268,3 +268,10 @@ as $$
    )
   returning q.*;
 $$;
+
+-- 31.08: описание — свойство ролика, не площадки (одно на YouTube/ТикТок/Дзен).
+alter table public.youtube_publish_queue add column if not exists description_options jsonb;
+alter table public.incoming_videos
+  add column if not exists description_options jsonb,
+  add column if not exists post_description text;
+grant update (post_description) on public.incoming_videos to authenticated;
