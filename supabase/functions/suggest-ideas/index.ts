@@ -18,6 +18,13 @@ import {
   selectYoutubeExperimentSet,
   trustedIdeaMetadata,
 } from "../_shared/youtube-trend.mjs";
+import { callerIsServiceRole } from "../_shared/tiktok.ts";
+import {
+  buildTikTokFeedbackContext,
+  feedbackBatchKey,
+  formatTikTokFeedbackPromptContext,
+  validateTikTokCandidates,
+} from "../_shared/tiktok-feedback-context.mjs";
 
 const REGION = "us-central1";
 const MODEL = "gemini-2.5-flash";
@@ -103,7 +110,7 @@ Telegram-канала о личных финансах. Формат каждо�
 Аудитория — русскоязычные взрослые, которых волнуют инфляция, зарплата, кредиты,
 налоги, ипотека, накопления, подписки, маркетплейсы, отпуск, пенсия.`;
 
-const СХЕМА = {
+const TIKTOK_SCHEMA = {
   type: "OBJECT",
   properties: {
     ideas: {
@@ -116,8 +123,9 @@ const СХЕМА = {
           hook: { type: "STRING", description: "хук-вопрос КАПСОМ по-русски, до 40 символов" },
           line: { type: "STRING", description: "реплика зверя по-русски, панч в конце. СТРОГО 20-25 слогов — это всё, что влезает в ролик на 10 секунд, остальное время нужно действию. Считай гласные. Длиннее — ролик придётся резать, и заказчица потеряет свои слова" },
           prompt: { type: "STRING", description: "промпт для видеомодели по-английски в стиле серии" },
+          why_this_idea: { type: "STRING", description: "кратко: какое evidence использовано и чем идея не повторяет недавние" },
         },
-        required: ["slug", "animal", "hook", "line", "prompt"],
+        required: ["slug", "animal", "hook", "line", "prompt", "why_this_idea"],
       },
     },
   },
@@ -138,24 +146,138 @@ function cardText(idea: Record<string, unknown>, targetPlatform: string): string
     `\n\nЦелевая площадка: ${platform}${trend}`;
 }
 
+async function configuredOwner(admin: SupabaseClient): Promise<string | null> {
+  const { data, error } = await admin.rpc("get_secret", {
+    p_name: "vibepost_content_brigade_owner",
+  });
+  return !error && typeof data === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data)
+    ? data : null;
+}
+
+async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
+  const pageSize = 500;
+  const collectPages = async (
+    fetchPage: (from: number, to: number) => Promise<{ data: Array<Record<string, any>> | null; error: any }>,
+  ) => {
+    const rows: Array<Record<string, any>> = [];
+    for (let from = 0;; from += pageSize) {
+      const { data, error } = await fetchPage(from, from + pageSize - 1);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < pageSize) return rows;
+    }
+  };
+  const inChunks = async (
+    ids: string[],
+    fetchChunk: (ids: string[], from: number, to: number) =>
+      Promise<{ data: Array<Record<string, any>> | null; error: any }>,
+  ) => {
+    const rows: Array<Record<string, any>> = [];
+    for (let offset = 0; offset < ids.length; offset += 100) {
+      const chunk = ids.slice(offset, offset + 100);
+      rows.push(...await collectPages((from, to) => fetchChunk(chunk, from, to)));
+    }
+    return rows;
+  };
+  const positiveLessons = await collectPages(async (from, to) => await admin
+    .from("content_lessons").select("*").eq("user_id", userId)
+    .in("category", ["CONFIRMED_LESSON", "WINNING_PATTERN"])
+    .in("status", ["SUPPORTED", "CONFIRMED"]).range(from, to));
+  const avoidedLessons = await collectPages(async (from, to) => await admin
+    .from("content_lessons").select("*").eq("user_id", userId)
+    .eq("category", "FAILED_PATTERN").eq("status", "REJECTED").range(from, to));
+  const lessons = [...positiveLessons, ...avoidedLessons];
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const citedExperimentIds = [...new Set(lessons.flatMap((lesson) =>
+    (Array.isArray(lesson.evidence) ? lesson.evidence : [])
+      .map((item) => item?.experiment_id).filter((id) => typeof id === "string" && uuid.test(id))))];
+  const citedExperiments = await inChunks(citedExperimentIds, async (ids, from, to) => await admin
+    .from("experiments").select("*").eq("user_id", userId).in("id", ids).range(from, to));
+  const { data: recentExperiments, error: recentError } = await admin.from("experiments")
+    .select("*").eq("user_id", userId).in("result", ["PASS", "FAIL"])
+    .order("updated_at", { ascending: false }).order("id").limit(10);
+  if (recentError) throw recentError;
+  const experimentsById = new Map([...citedExperiments, ...(recentExperiments ?? [])]
+    .map((row) => [row.id, row]));
+  const experiments = [...experimentsById.values()];
+  const analyses = await inChunks(citedExperimentIds, async (ids, from, to) => await admin
+    .from("content_analysis_results").select("*").eq("user_id", userId)
+    .in("experiment_id", ids).order("created_at", { ascending: false }).range(from, to));
+  const hypotheses = await collectPages(async (from, to) => await admin
+    .from("content_hypotheses").select("*").eq("user_id", userId)
+    .eq("status", "REJECTED").order("updated_at", { ascending: false }).range(from, to));
+  const { data: framework, error: frameworkError } = await admin
+    .from("prompt_framework_versions").select("*,prompt_framework_rules(*)")
+    .eq("user_id", userId).eq("is_current", true).maybeSingle();
+  if (frameworkError) throw frameworkError;
+  const ideaFields = "id,target_platform,status,route,decided_at,created_at,animal,hook,changed_variable,idea_pattern,feedback_batch_key";
+  const { data: approvedIdeas, error: approvedError } = await admin.from("video_ideas")
+    .select(ideaFields).eq("user_id", userId).eq("target_platform", "tiktok")
+    .not("decided_at", "is", null).in("route", ["self", "paid"])
+    .in("status", ["approved", "generating", "done"])
+    .order("decided_at", { ascending: false }).order("id").limit(10);
+  const { data: rejectedIdeas, error: rejectedError } = await admin.from("video_ideas")
+    .select(ideaFields).eq("user_id", userId).eq("target_platform", "tiktok")
+    .not("decided_at", "is", null).is("route", null).eq("status", "rejected")
+    .order("decided_at", { ascending: false }).order("id").limit(10);
+  if (approvedError || rejectedError) throw approvedError ?? rejectedError;
+  const recentIdeas = await collectPages(async (from, to) => await admin.from("video_ideas")
+    .select(ideaFields).eq("user_id", userId).eq("target_platform", "tiktok")
+    .or("decided_at.not.is.null,feedback_batch_key.not.is.null")
+    .order("created_at", { ascending: false }).range(from, to));
+  const ideasById = new Map([...(approvedIdeas ?? []), ...(rejectedIdeas ?? []), ...recentIdeas]
+    .map((row) => [row.id, row]));
+  const evidenceVideoIds = [...new Set(lessons.flatMap((lesson) =>
+    (Array.isArray(lesson.videos_used) ? lesson.videos_used : []))
+    .filter((id) => typeof id === "string" && uuid.test(id)))];
+  const snapshots = await inChunks(evidenceVideoIds, async (ids, from, to) => await admin
+    .from("video_metric_snapshots").select("*").eq("user_id", userId)
+    .in("video_id", ids).order("collected_at", { ascending: false }).range(from, to));
+  const studio = await inChunks(evidenceVideoIds, async (ids, from, to) => await admin
+    .from("studio_metrics").select("*").eq("user_id", userId)
+    .in("video_id", ids).range(from, to));
+  return {
+    lessons, experiments, analyses, hypotheses, framework: framework ?? null,
+    ideas: [...ideasById.values()], snapshots, studio_metrics: studio,
+  };
+}
+
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+  if (!(await callerIsServiceRole(req, serviceKey))) {
+    return json(403, { error: "forbidden" });
+  }
   const admin = createClient(
     Deno.env.get("SUPABASE_URL")!,
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    serviceKey,
   );
 
   const body = await req.json().catch(() => ({}));
   const count = Math.min(Math.max(Number(body.count) || 5, 1), 5);
   const previewOnly = body.preview_only === true;
+  if (body.request_id !== undefined &&
+      (typeof body.request_id !== "string" ||
+        !/^[A-Za-z0-9._:-]{1,128}$/.test(body.request_id))) {
+    return json(400, { error: "invalid_request_id" });
+  }
+  if (body.topic !== undefined &&
+      (typeof body.topic !== "string" || !body.topic.trim() || body.topic.length > 100)) {
+    return json(400, { error: "invalid_topic" });
+  }
+  const requestId = typeof body.request_id === "string"
+    ? body.request_id
+    : `scheduled:${new Date().toISOString().slice(0, 10)}`;
 
-  // Владелец = тот, у кого настроены уведомления в Telegram
+  // POST-04: learning memory and idea generation must resolve the same configured owner.
+  const ownerId = await configuredOwner(admin);
+  if (!ownerId) return json(500, { error: "owner_not_configured" });
   const { data: profile } = await admin
     .from("profiles")
     .select("id, error_notify_tg_id, error_notify_bot_id, target_platform")
-    .not("error_notify_tg_id", "is", null)
-    .limit(1)
+    .eq("id", ownerId)
     .maybeSingle();
   if (!profile?.error_notify_tg_id || !profile.error_notify_bot_id) {
     return json(400, { error: "В настройках не указан Telegram ID и бот-отправитель" });
@@ -168,6 +290,29 @@ Deno.serve(async (req) => {
   if (!token) return json(400, { error: "Не удалось получить токен бота" });
 
   const targetPlatform = normalizeTargetPlatform(profile.target_platform);
+  let feedbackContext: Awaited<ReturnType<typeof buildTikTokFeedbackContext>> | null = null;
+  let batchKey: string | null = null;
+  if (targetPlatform === TARGET_PLATFORMS.TIKTOK) {
+    const feedbackInputs = await loadTikTokFeedbackInputs(admin, profile.id);
+    feedbackContext = await buildTikTokFeedbackContext({
+      ...feedbackInputs,
+      topic: typeof body.topic === "string" ? body.topic.trim() : null,
+    });
+    batchKey = await feedbackBatchKey(profile.id, requestId);
+    if (!previewOnly) {
+      const { data: replay, error: replayError } = await admin.from("video_ideas")
+        .select("id,animal,hook,line,target_platform,trend_signal,feedback_candidate_index")
+        .eq("user_id", profile.id).eq("feedback_batch_key", batchKey)
+        .order("feedback_candidate_index");
+      if (replayError) throw replayError;
+      if (replay?.length) {
+        return json(200, {
+          ok: true, replayed: true, created: 0, existing: replay.length,
+          feedback_outcome: feedbackContext.outcome,
+        });
+      }
+    }
+  }
 
   // Чтобы звери не повторялись — показываем модели, кто уже был
   const { data: былые } = await admin
@@ -209,13 +354,14 @@ Deno.serve(async (req) => {
               text: `${СТИЛЬ}\n\nПридумай ${count} новых идей.\n` +
                 (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "") +
                 `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
-                `без морали и без объяснений шутки.`,
+                `без морали и без объяснений шутки.\n\n` +
+                (feedbackContext ? formatTikTokFeedbackPromptContext(feedbackContext) : ""),
             }],
           }],
           generationConfig: {
             temperature: 1.1,
             responseMimeType: "application/json",
-            responseSchema: СХЕМА,
+            responseSchema: TIKTOK_SCHEMA,
           },
         }),
       });
@@ -223,6 +369,7 @@ Deno.serve(async (req) => {
       if (!res.ok) throw new Error(JSON.stringify(data).slice(0, 300));
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
       ideas = JSON.parse(text).ideas ?? [];
+      if (feedbackContext) ideas = validateTikTokCandidates(ideas, feedbackContext);
     } catch (e) {
       return json(500, { error: `Gemini не ответил: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -243,6 +390,9 @@ Deno.serve(async (req) => {
       line: idea.line,
       prompt: idea.prompt,
       target_platform: targetPlatform,
+      ...(targetPlatform === TARGET_PLATFORMS.TIKTOK
+        ? { why_this_idea: idea.why_this_idea ?? null, idea_pattern: idea.idea_pattern ?? null }
+        : {}),
       ...(targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
         ? trustedIdeaMetadata(candidate)
         : {}),
@@ -269,15 +419,67 @@ Deno.serve(async (req) => {
         reference_outlier_ratio: row.reference_outlier_ratio ?? null,
         causal_pattern: row.causal_pattern ?? null,
         payoff_class: row.payoff_class ?? null,
+        ...(targetPlatform === TARGET_PLATFORMS.TIKTOK ? {
+          why_this_idea: row.why_this_idea ?? null,
+          feedback_outcome: feedbackContext?.outcome ?? null,
+          hypothesis_key: feedbackContext?.hypothesis_key ?? null,
+        } : {}),
         card_text: cardText(row, targetPlatform),
       })),
     });
   }
 
-  const { data: saved } = await admin
-    .from("video_ideas")
-    .insert(rows)
-    .select("id, animal, hook, line, target_platform, trend_signal");
+  let saved: Array<Record<string, any>> = [];
+  if (targetPlatform === TARGET_PLATFORMS.TIKTOK &&
+      feedbackContext?.outcome === "HYPOTHESIS" && feedbackContext.hypothesis_candidate &&
+      feedbackContext.hypothesis_key && batchKey) {
+    const selectedLessons = feedbackContext.OWN_PERFORMANCE.selected_lessons
+      .map((lesson) => lesson.lesson_id);
+    const avoidedLessons = feedbackContext.OWN_PERFORMANCE.avoided_lessons
+      .map((lesson) => lesson.lesson_id);
+    const stableFeedbackContext = {
+      context_version: feedbackContext.context_version,
+      platform: feedbackContext.platform,
+      OWN_PERFORMANCE: {
+        source_type: "OWN_PERFORMANCE",
+        selected_lessons: feedbackContext.OWN_PERFORMANCE.selected_lessons,
+        avoided_lessons: feedbackContext.OWN_PERFORMANCE.avoided_lessons,
+        primary: feedbackContext.OWN_PERFORMANCE.primary,
+        prompt_framework: feedbackContext.OWN_PERFORMANCE.prompt_framework,
+      },
+    };
+    const { data, error } = await admin.rpc("persist_tiktok_feedback_batch", {
+      p_user_id: profile.id,
+      p_batch_key: batchKey,
+      p_context_hash: feedbackContext.context_hash,
+      p_hypothesis_key: feedbackContext.hypothesis_key,
+      p_hypothesis_statement: feedbackContext.hypothesis_candidate.statement,
+      p_changed_variable: feedbackContext.hypothesis_candidate.changed_variable,
+      p_expected_effect: feedbackContext.hypothesis_candidate.expected_effect,
+      p_rationale: feedbackContext.hypothesis_candidate.rationale,
+      p_hypothesis_evidence: feedbackContext.hypothesis_candidate.evidence,
+      p_constants: feedbackContext.hypothesis_candidate.constants,
+      p_feedback_context: stableFeedbackContext,
+      p_selected_lesson_ids: selectedLessons,
+      p_avoided_lesson_ids: avoidedLessons,
+      p_api_metric_snapshot_ids: feedbackContext.OWN_PERFORMANCE.metric_provenance.api_snapshot_ids,
+      p_studio_metric_ids: feedbackContext.OWN_PERFORMANCE.metric_provenance.studio_metric_ids,
+      p_prompt_framework_id: feedbackContext.OWN_PERFORMANCE.prompt_framework.id,
+      p_prompt_framework_version: feedbackContext.OWN_PERFORMANCE.prompt_framework.version_label,
+      p_candidates: rows.map((row) => ({
+        slug: row.slug, animal: row.animal, hook: row.hook, line: row.line,
+        prompt: row.prompt, why_this_idea: row.why_this_idea,
+        idea_pattern: row.idea_pattern,
+      })),
+    });
+    if (error) throw error;
+    saved = Array.isArray(data) ? data : [];
+  } else {
+    const { data, error } = await admin.from("video_ideas").insert(rows)
+      .select("id, animal, hook, line, target_platform, trend_signal");
+    if (error) throw error;
+    saved = data ?? [];
+  }
 
   // Карточки в бота: под каждой три кнопки
   for (const idea of saved ?? []) {
@@ -324,5 +526,9 @@ Deno.serve(async (req) => {
     }),
   }).catch(() => {});
 
-  return json(200, { ok: true, создано: saved?.length ?? 0 });
+  return json(200, {
+    ok: true,
+    создано: saved.length,
+    feedback_outcome: feedbackContext?.outcome ?? null,
+  });
 });

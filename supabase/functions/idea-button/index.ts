@@ -40,10 +40,36 @@ function ideaCard(idea: Record<string, unknown>, suffix = "") {
     `${trend}${suffix ? `\n\n${suffix}` : ""}`;
 }
 
-function trustedTaskContext(idea: Record<string, unknown>) {
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function trustedTaskContext(
+  idea: Record<string, unknown>,
+  ownerPreference: unknown = null,
+  learningEvidence: unknown = null,
+) {
   const platform = String(idea.target_platform ?? "tiktok");
   if (platform !== "youtube_shorts") {
-    return "target_platform=tiktok; сохранить существующий current production house format.";
+    const ownPerformance = {
+      source_type: "OWN_PERFORMANCE",
+      hypothesis_id: idea.hypothesis_id ?? null,
+      selected_lesson_ids: idea.selected_lesson_ids ?? [],
+      avoided_lesson_ids: idea.avoided_lesson_ids ?? [],
+      changed_variable: idea.changed_variable ?? null,
+      constants: idea.experiment_constants ?? {},
+      prompt_framework_id: idea.prompt_framework_id ?? null,
+      prompt_framework_version: idea.prompt_framework_version ?? null,
+      feedback_context_hash: idea.feedback_context_hash ?? null,
+      evidence: learningEvidence ?? { selected_lessons: [], avoided_patterns: [] },
+    };
+    return `target_platform=tiktok; сохранить существующий current production house format. ` +
+      `TRUSTED OWN_PERFORMANCE: ${JSON.stringify(ownPerformance)}. ` +
+      `OWNER_PREFERENCE (не performance evidence): ${JSON.stringify(ownerPreference ?? {
+        source_type: "OWNER_PREFERENCE", approved: [], rejected: [],
+      })}. Rejected lesson IDs — только avoidance. Изменять ровно ` +
+      `${String(idea.changed_variable ?? "NO_STRONG_HYPOTHESIS")}; constants не менять.`;
   }
   const metadata = {
     target_platform: "youtube_shorts",
@@ -58,6 +84,48 @@ function trustedTaskContext(idea: Record<string, unknown>) {
     `dialogue, plot, shots, branding и creator identity не копировать. Финальный ` +
     `prompt: vertical 9:16, около 10 секунд, ранний visual hook, один главный ` +
     `герой и prop/mechanism, ясный visual payoff, короткая русская реплика.`;
+}
+
+async function ownerPreferenceContext(admin: SupabaseClient, userId: string, excludeIdeaId: string) {
+  const { data: approved, error: approvedError } = await admin.from("video_ideas")
+    .select("id,status,route,decided_at,animal,hook")
+    .eq("user_id", userId).eq("target_platform", "tiktok")
+    .not("decided_at", "is", null).neq("id", excludeIdeaId)
+    .in("route", ["self", "paid"]).in("status", ["approved", "generating", "done"])
+    .order("decided_at", { ascending: false }).order("id").limit(10);
+  const { data: rejected, error: rejectedError } = await admin.from("video_ideas")
+    .select("id,status,route,decided_at,animal,hook")
+    .eq("user_id", userId).eq("target_platform", "tiktok")
+    .not("decided_at", "is", null).neq("id", excludeIdeaId)
+    .is("route", null).eq("status", "rejected")
+    .order("decided_at", { ascending: false }).order("id").limit(10);
+  if (approvedError || rejectedError) throw approvedError ?? rejectedError;
+  const shape = (row: Record<string, unknown>) => ({
+    idea_id: row.id, animal: row.animal ?? null, hook: row.hook ?? null,
+    route: row.route ?? null, decided_at: row.decided_at,
+  });
+  return {
+    source_type: "OWNER_PREFERENCE",
+    approved: (approved ?? []).map(shape),
+    rejected: (rejected ?? []).map(shape),
+  };
+}
+
+async function feedbackEvidenceContext(admin: SupabaseClient, userId: string, idea: Record<string, any>) {
+  const selectedIds = Array.isArray(idea.selected_lesson_ids) ? idea.selected_lesson_ids : [];
+  const avoidedIds = Array.isArray(idea.avoided_lesson_ids) ? idea.avoided_lesson_ids : [];
+  const ids = [...new Set([...selectedIds, ...avoidedIds])];
+  if (!ids.length) return { selected_lessons: [], avoided_patterns: [] };
+  const { data, error } = await admin.from("content_lessons")
+    .select("id,lesson,category,status,confidence")
+    .eq("user_id", userId).in("id", ids);
+  if (error) throw error;
+  const byId = new Map((data ?? []).map((row) => [row.id, row]));
+  const shape = (id: string) => byId.get(id) ?? { id, missing: true };
+  return {
+    selected_lessons: selectedIds.map(shape),
+    avoided_patterns: avoidedIds.map(shape),
+  };
 }
 
 // ── доступ к Google по служебному аккаунту ────────────────────────────────
@@ -185,14 +253,14 @@ Deno.serve(async (req) => {
       body: JSON.stringify(payload),
     }).catch(() => null);
 
-  const позвать = (count: number) =>
+  const позвать = (count: number, requestId: string) =>
     fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/suggest-ideas`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ count }),
+      body: JSON.stringify({ count, request_id: `telegram:${requestId}` }),
     }).catch(() => null);
 
   const запустить = (fn: string) =>
@@ -308,7 +376,7 @@ ${выбранная}
     const новая = String(cq.new_line ?? "").trim();
     const { data: правимая } = await admin
       .from("video_ideas").select(
-        "id,user_id,slug,hook,animal,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints",
+        "id,user_id,status,slug,hook,animal,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints",
       )
       .eq("user_id", profile.id).eq("tg_message_id", messageId).maybeSingle();
     if (!правимая || !новая) {
@@ -318,24 +386,31 @@ ${выбранная}
       });
       return json(200, { ok: true });
     }
-    // Правка реплики — тоже повод переписать промт, а промт пишет бригада.
-    // Раньше сервер пересобирал его сам через Gemini: мимо критика, мимо
-    // правил речи из JOURNAL.md и без всякой записи для Claude.
-    await admin.from("video_ideas")
-      .update({ line: новая, prompt: null }).eq("id", правимая.id);
-    await admin.from("claude_tasks").insert({
-      user_id: правимая.user_id,
-      idea_id: правимая.id,
-      text: `Реплику правили. Переписать промт. Герой: ${правимая.animal}. ` +
-        `Хук: ${правимая.hook}. Новая реплика: «${новая}». Slug: ${правимая.slug}. ` +
-        `${trustedTaskContext(правимая)} ` +
-        `Порядок: scenarist → director → cinematographer → critic, перед этим ` +
-        `JOURNAL.md и PROCESS.md. Промт прислать одним блоком и записать в video_ideas.prompt.`,
-    });
+    if (правимая.status !== "new") {
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text: "Эта идея уже выбрана. Старую карточку не переписываю: выберите новую идею.",
+      });
+      return json(200, { ok: true });
+    }
+    // POST-04: draft edit is kept, but prompt work starts only after the
+    // explicit self/pay owner decision. This prevents an orphan pre-approval task.
+    const { data: edited, error: editError } = await admin.from("video_ideas")
+      .update({ line: новая, prompt: null }).eq("id", правимая.id).eq("status", "new")
+      .select("id").maybeSingle();
+    if (editError) throw editError;
+    if (!edited) {
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text: "Эта идея уже была выбрана параллельно. Правку не применяю.",
+      });
+      return json(200, { ok: true });
+    }
     await tg("sendMessage", {
       chat_id: chatId,
       text: `Принял новый текст:\n\n<i>${новая}</i>\n\n` +
-        `Промт под него напишет бригада и пришлёт одним блоком.`,
+        `После выбора «Сделаю сама» или «Сгенерируй» бригада напишет промт ` +
+        `под этот текст и пришлёт одним блоком.`,
       parse_mode: "HTML",
     });
     return json(200, { ok: true });
@@ -343,12 +418,12 @@ ${выбранная}
 
   if (action === "more") {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Придумываю…" });
-    await позвать(5);
+    await позвать(5, cq.id);
     return json(200, { ok: true });
   }
 
   const { data: idea } = await admin
-    .from("video_ideas").select("id,user_id,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints")
+    .from("video_ideas").select("id,user_id,status,route,decided_at,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints,hypothesis_id,selected_lesson_ids,avoided_lesson_ids,changed_variable,experiment_constants,prompt_framework_id,prompt_framework_version,feedback_context_hash")
     .eq("id", ideaId).eq("user_id", profile.id).maybeSingle();
   if (!idea) {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Идея не найдена" });
@@ -363,6 +438,12 @@ ${выбранная}
   };
   const решение = решения[action];
   if (!решение) return json(200, { ok: true });
+  const ownerPreference = idea.target_platform === "tiktok"
+    ? await ownerPreferenceContext(admin, idea.user_id, idea.id)
+    : null;
+  const learningEvidence = idea.target_platform === "tiktok"
+    ? await feedbackEvidenceContext(admin, idea.user_id, idea)
+    : null;
 
   await admin.from("video_ideas")
     .update({
@@ -391,16 +472,17 @@ ${выбранная}
   // критика — то есть мимо правил речи из JOURNAL.md. Теперь бот только
   // записывает выбранную идею заданием.
   if (action === "self") {
-    const { error: сбой } = await admin.from("claude_tasks").insert({
+    const { error: сбой } = await admin.from("claude_tasks").upsert({
       user_id: idea.user_id,
       idea_id: idea.id,
+      prompt_task_kind: "SELECTED_PROMPT",
       text: `Написать промт ролика по идее. Герой: ${idea.animal}. ` +
         `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
-        `${trustedTaskContext(idea)} ` +
+        `${trustedTaskContext(idea, ownerPreference, learningEvidence)} ` +
         `Порядок обязателен: scenarist → director → cinematographer → critic, ` +
         `перед этим JOURNAL.md и PROCESS.md. Промт прислать одним блоком и ` +
         `записать в video_ideas.prompt.`,
-    });
+    }, { onConflict: "user_id,idea_id,prompt_task_kind", ignoreDuplicates: true });
     // Отказ базы нельзя выдавать за успех: 7 августа идея пропала молча, а
     // Татьяне ушло «Идею принял». Она ждала промт, которого никто не писал.
     if (сбой) {
@@ -429,18 +511,36 @@ ${выбранная}
   // за пустой запрос. Ждём промт, потом её подтверждение.
   if (action === "pay") {
     if (idea.prompt) {
+      if (idea.target_platform === "tiktok") {
+        const { error: provenanceError } = await admin.rpc("persist_tiktok_prompt_provenance", {
+          p_mode: "OWNER_SELECTED_EXISTING",
+          p_video_idea_id: idea.id,
+          p_claude_task_id: null,
+          p_prompt: idea.prompt,
+          p_prompt_hash: await sha256Hex(idea.prompt),
+        });
+        if (provenanceError) {
+          await tg("sendMessage", {
+            chat_id: chatId,
+            text: "Генерацию не запускаю: provenance промта не сохранился. Попробуйте ещё раз.",
+          });
+          return json(200, { ok: true });
+        }
+      }
       await запустить("veo-start");
     } else {
-      await admin.from("claude_tasks").insert({
+      const { error: taskError } = await admin.from("claude_tasks").upsert({
         user_id: idea.user_id,
         idea_id: idea.id,
+        prompt_task_kind: "SELECTED_PROMPT",
         text: `Написать промт для ПЛАТНОЙ генерации. Герой: ${idea.animal}. ` +
           `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
-          `${trustedTaskContext(idea)} ` +
+          `${trustedTaskContext(idea, ownerPreference, learningEvidence)} ` +
           `Порядок: scenarist → director → cinematographer → critic, перед этим ` +
           `JOURNAL.md и PROCESS.md. Промт записать в video_ideas.prompt и ` +
           `прислать Татьяне смету — без её подтверждения генерацию не запускать.`,
-      });
+      }, { onConflict: "user_id,idea_id,prompt_task_kind", ignoreDuplicates: true });
+      if (taskError) throw taskError;
       await tg("sendMessage", {
         chat_id: chatId,
         text: `<b>${idea.hook}</b>\n\nПромт для платной генерации напишет бригада. ` +
@@ -450,7 +550,7 @@ ${выбранная}
       });
     }
   }
-  if (action === "redo") await позвать(1);
+  if (action === "redo") await позвать(1, cq.id);
 
   return json(200, { ok: true });
 });

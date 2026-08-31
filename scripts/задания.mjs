@@ -10,6 +10,7 @@
  *   node scripts/задания.mjs сказать "текст" — написать Татьяне в бота
  */
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 const env = {};
 for (const line of readFileSync(new URL('../.env', import.meta.url), 'utf8').split(/\r?\n/)) {
@@ -245,19 +246,32 @@ if (команда === 'список') {
   await бот(блок, 'HTML');
   if (taskId) {
     const taskResponse = await fetch(
-      `${url}/rest/v1/claude_tasks?id=eq.${taskId}&select=idea_id&limit=1`,
+      `${url}/rest/v1/claude_tasks?id=eq.${taskId}` +
+      `&select=idea_id,video_ideas(target_platform)&limit=1`,
       { headers: h },
     );
     if (!taskResponse.ok) throw new Error('не удалось найти idea_id задания');
     const [task] = await taskResponse.json();
     if (task?.idea_id) {
-      const saveResponse = await fetch(`${url}/rest/v1/video_ideas?id=eq.${task.idea_id}`, {
-        method: 'PATCH', headers: h,
-        body: JSON.stringify({
-          prompt: компакт,
-          generated_prompt_at: new Date().toISOString(),
-        }),
-      });
+      const targetPlatform = task.video_ideas?.target_platform ?? 'tiktok';
+      const saveResponse = targetPlatform === 'tiktok'
+        ? await fetch(`${url}/rest/v1/rpc/persist_tiktok_prompt_provenance`, {
+          method: 'POST', headers: h,
+          body: JSON.stringify({
+            p_mode: 'CLAUDE_TASK',
+            p_video_idea_id: task.idea_id,
+            p_claude_task_id: taskId,
+            p_prompt: компакт,
+            p_prompt_hash: createHash('sha256').update(компакт, 'utf8').digest('hex'),
+          }),
+        })
+        : await fetch(`${url}/rest/v1/video_ideas?id=eq.${task.idea_id}`, {
+          method: 'PATCH', headers: h,
+          body: JSON.stringify({
+            prompt: компакт,
+            generated_prompt_at: new Date().toISOString(),
+          }),
+        });
       if (!saveResponse.ok) throw new Error('промпт отправлен, но не записался в video_ideas');
     }
   }
