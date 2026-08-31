@@ -13,7 +13,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 | P1 Cross-System Creative Identity | Store platform-neutral references from POST-01 `creative_id` to idea/incoming/publication rows; resolve, never copy, existing metrics. |
 | P2 TikTok Feedback-to-Idea | POST-04 `PASS/ACCEPTED`: existing lessons feed a deterministic context, one evidence-bound hypothesis and candidate ideas; explicit owner choice gates the existing prompt path. |
 | P3 YouTube Own-Content Learning | POST-05 `PASS/ACCEPTED`: own `published_shorts_stats` feed the existing experiment/analysis/lesson memory through a narrow YouTube metric adapter and continue into an owner-gated idea/prompt. |
-| P4 TikTok Market Intelligence | POST-06 discovery and POST-07 implementation v1 complete: deliberate owner references use bounded official oEmbed, append-only FACT/DNA evidence and PREVIEW-only MARKET context; MARKET stays separate from OWN and OWNER evidence. |
+| P4 TikTok Market Intelligence | POST-08 `PASS/ACCEPTED`: accepted structural MARKET evidence now enters the existing owner-gated TikTok idea/prompt path beside separate OWN and OWNER roots; it remains only a hypothesis source and cannot create verdicts or lessons. |
 | P5 Parent/Mutation Lineage | Add explicit parent and changed-variable lineage through a separate accepted contract. |
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
@@ -44,6 +44,12 @@ VibePost now owns two narrow additive entities: owner-scoped `market_references`
 
 The preview wraps the accepted POST-04 builder without changing it and exposes independent `OWN_PERFORMANCE`, `OWNER_PREFERENCE` and `MARKET_REFERENCE` roots for exactly one selected reference. It creates no hypothesis, idea, prompt, experiment result or lesson and cannot start production/publishing. There is no crawling, scraping, media download, live collector change or Generator interface change.
 
+## POST-08 P4 idea-integration boundary
+
+The existing POST-04 Feedback Context Builder remains authoritative for `OWN_PERFORMANCE` and `OWNER_PREFERENCE`; POST-08 adds the accepted POST-07 evidence as a third, structurally separate `MARKET_REFERENCE` root. Only `TAKE` or `INTERESTING_MECHANIC` references with accepted human DNA are eligible. `SKIP` is excluded, while `NOT_MY_STYLE` is an owner avoidance constraint rather than a performance result. OWN confirmed/supported evidence outranks a market signal, and market-vs-own or owner-vs-market conflicts are persisted explicitly instead of silently resolved.
+
+Market mechanics are reduced to an abstract, anti-copy context. Source URLs, creator identity, captions, scripts and source identifiers cannot reach the idea model or production prompt. A market-only proposal remains a LOW-confidence `HYPOTHESIS`, changes one material variable, preserves constants and requires explicit owner selection. Candidate and prompt records retain internal evidence IDs and conflict provenance; the existing Generator interface, tuned settings, collectors, verdict/lesson logic and publishing gate remain unchanged. Market evidence cannot create a verdict or lesson, and no candidate starts production automatically.
+
 ## Do not build
 
 - no Creative Memory database;
@@ -55,4 +61,4 @@ The preview wraps the accepted POST-04 builder without changing it and exposes i
 - no metric copying into identity rows;
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
-POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 implementation evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md` in Text Factory.
+POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md` in Text Factory.

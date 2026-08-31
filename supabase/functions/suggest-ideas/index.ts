@@ -26,6 +26,12 @@ import {
   validateTikTokCandidates,
 } from "../_shared/tiktok-feedback-context.mjs";
 import {
+  buildTikTokMarketIdeaContext,
+  formatTikTokMarketIdeaPromptContext,
+  marketFeedbackBatchKey,
+  validateTikTokMarketCandidates,
+} from "../_shared/tiktok-market-idea.mjs";
+import {
   annotateYoutubeCandidates,
   buildYoutubeFeedbackContext,
   youtubeFeedbackBatchKey,
@@ -137,6 +143,24 @@ const TIKTOK_SCHEMA = {
   required: ["ideas"],
 };
 
+const TIKTOK_MARKET_SCHEMA = {
+  ...TIKTOK_SCHEMA,
+  properties: {
+    ideas: {
+      ...TIKTOK_SCHEMA.properties.ideas,
+      items: {
+        ...TIKTOK_SCHEMA.properties.ideas.items,
+        properties: {
+          ...TIKTOK_SCHEMA.properties.ideas.items.properties,
+          market_mechanic_key: { type: "STRING", enum: ["M1", "M2", "M3", "M4", "M5", "NONE"] },
+          novelty_status: { type: "STRING", enum: ["NEW_CONCEPT", "CONTROLLED_MUTATION", "MARKET_INSPIRED_TEST"] },
+        },
+        required: [...TIKTOK_SCHEMA.properties.ideas.items.required, "market_mechanic_key", "novelty_status"],
+      },
+    },
+  },
+};
+
 const html = (value: unknown) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -246,6 +270,48 @@ async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
     lessons, experiments, analyses, hypotheses, framework: framework ?? null,
     ideas: [...ideasById.values()], snapshots, studio_metrics: studio,
   };
+}
+
+async function loadTikTokMarketInputs(admin: SupabaseClient, userId: string) {
+  // Deliberately do not select canonical_url, external_reference_id, creator
+  // identity, FACT captions, source_locator or media. Only accepted structural
+  // HUMAN_REVIEW DNA may cross the idea-generation boundary.
+  const selectReferences = "id,owner_disposition,updated_at";
+  const collectPages = async (fetchPage: (from: number, to: number) => Promise<any>) => {
+    const rows: Array<Record<string, any>> = [];
+    for (let from = 0;; from += 500) {
+      const { data, error } = await fetchPage(from, from + 499);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if ((data ?? []).length < 500) return rows;
+    }
+  };
+  const [positive, avoidance] = await Promise.all([
+    collectPages((from, to) => admin.from("market_references").select(selectReferences)
+      .eq("user_id", userId).eq("platform", "tiktok")
+      .eq("status", "RESOLVED")
+      .in("owner_disposition", ["TAKE", "INTERESTING_MECHANIC"])
+      .order("updated_at", { ascending: false }).order("id").range(from, to)),
+    collectPages((from, to) => admin.from("market_references").select(selectReferences)
+      .eq("user_id", userId).eq("platform", "tiktok")
+      .eq("status", "RESOLVED")
+      .eq("owner_disposition", "NOT_MY_STYLE")
+      .order("updated_at", { ascending: false }).order("id").range(from, to)),
+  ]);
+  const references = [...positive, ...avoidance];
+  const referenceIds = references.map((row) => row.id);
+  if (!referenceIds.length) return { references: [], evidence: [] };
+  const evidence: Array<Record<string, any>> = [];
+  for (let offset = 0; offset < referenceIds.length; offset += 100) {
+    const chunk = referenceIds.slice(offset, offset + 100);
+    evidence.push(...await collectPages((from, to) => admin.from("market_reference_evidence")
+      .select("id,market_reference_id,evidence_kind,analysis_identity,evidence_version,created_at,confidence,payload")
+      .eq("user_id", userId).eq("evidence_kind", "DNA_INFERENCE")
+      .in("market_reference_id", chunk)
+      .order("evidence_version", { ascending: false }).order("created_at", { ascending: false }).order("id")
+      .range(from, to)));
+  }
+  return { references, evidence };
 }
 
 async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) {
@@ -374,6 +440,7 @@ Deno.serve(async (req) => {
 
   const targetPlatform = normalizeTargetPlatform(profile.target_platform);
   let feedbackContext: Awaited<ReturnType<typeof buildTikTokFeedbackContext>> | null = null;
+  let marketIdeaContext: Awaited<ReturnType<typeof buildTikTokMarketIdeaContext>> | null = null;
   let batchKey: string | null = null;
   let youtubeFeedbackContext: Awaited<ReturnType<typeof buildYoutubeFeedbackContext>> | null = null;
   let youtubeBatchKeyValue: string | null = null;
@@ -384,16 +451,37 @@ Deno.serve(async (req) => {
       topic: typeof body.topic === "string" ? body.topic.trim() : null,
     });
     batchKey = await feedbackBatchKey(profile.id, requestId);
+    const marketInputs = await loadTikTokMarketInputs(admin, profile.id);
+    marketIdeaContext = await buildTikTokMarketIdeaContext(feedbackContext, marketInputs);
+    if (marketIdeaContext.active) {
+      batchKey = await marketFeedbackBatchKey(batchKey, marketIdeaContext.context_hash);
+    }
     if (!previewOnly) {
       const { data: replay, error: replayError } = await admin.from("video_ideas")
-        .select("id,animal,hook,line,target_platform,trend_signal,feedback_candidate_index")
+        .select("id,animal,hook,line,target_platform,trend_signal,feedback_candidate_index,market_context_hash")
         .eq("user_id", profile.id).eq("feedback_batch_key", batchKey)
         .order("feedback_candidate_index");
       if (replayError) throw replayError;
-      if (replay?.length) {
+      if (replay?.length && !marketIdeaContext.active) {
         return json(200, {
           ok: true, replayed: true, created: 0, existing: replay.length,
           feedback_outcome: feedbackContext.outcome,
+        });
+      }
+      if (replay?.length && marketIdeaContext.active) {
+        const { data: verified, error: verifyError } = await admin.rpc("persist_tiktok_market_feedback_batch", {
+          p_user_id: profile.id, p_batch_key: batchKey,
+          p_context_hash: marketIdeaContext.context_hash, p_hypothesis_key: marketIdeaContext.hypothesis_key,
+          p_hypothesis: null, p_selected_lesson_ids: null, p_avoided_lesson_ids: null,
+          p_api_metric_snapshot_ids: null, p_studio_metric_ids: null,
+          p_prompt_framework_id: null, p_prompt_framework_version: null,
+          p_market_context: null, p_candidates: null,
+        });
+        if (verifyError) throw verifyError;
+        return json(200, {
+          ok: true, replayed: true, created: 0,
+          existing: Array.isArray(verified) ? verified.length : replay.length,
+          feedback_outcome: marketIdeaContext.outcome,
         });
       }
     }
@@ -458,13 +546,14 @@ Deno.serve(async (req) => {
                 (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "") +
                 `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
                 `без морали и без объяснений шутки.\n\n` +
-                (feedbackContext ? formatTikTokFeedbackPromptContext(feedbackContext) : ""),
+                (feedbackContext ? formatTikTokFeedbackPromptContext(feedbackContext) : "") +
+                (marketIdeaContext?.active ? `\n${formatTikTokMarketIdeaPromptContext(marketIdeaContext)}` : ""),
             }],
           }],
           generationConfig: {
             temperature: 1.1,
             responseMimeType: "application/json",
-            responseSchema: TIKTOK_SCHEMA,
+            responseSchema: marketIdeaContext?.active ? TIKTOK_MARKET_SCHEMA : TIKTOK_SCHEMA,
           },
         }),
       });
@@ -472,7 +561,9 @@ Deno.serve(async (req) => {
       if (!res.ok) throw new Error(JSON.stringify(data).slice(0, 300));
       const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
       ideas = JSON.parse(text).ideas ?? [];
-      if (feedbackContext) ideas = validateTikTokCandidates(ideas, feedbackContext);
+      if (marketIdeaContext?.active) {
+        ideas = validateTikTokMarketCandidates(ideas, marketIdeaContext);
+      } else if (feedbackContext) ideas = validateTikTokCandidates(ideas, feedbackContext);
     } catch (e) {
       return json(500, { error: `Gemini не ответил: ${e instanceof Error ? e.message : String(e)}` });
     }
@@ -494,7 +585,25 @@ Deno.serve(async (req) => {
       prompt: idea.prompt,
       target_platform: targetPlatform,
       ...(targetPlatform === TARGET_PLATFORMS.TIKTOK
-        ? { why_this_idea: idea.why_this_idea ?? null, idea_pattern: idea.idea_pattern ?? null }
+        ? {
+          why_this_idea: idea.why_this_idea ?? null,
+          idea_pattern: idea.idea_pattern ?? null,
+          ...(marketIdeaContext?.active ? {
+            market_mechanic_key: idea.market_mechanic_key,
+            novelty_status: idea.novelty_status,
+            market_reference_ids: idea.market_reference_ids,
+            market_dna_ids: idea.market_dna_ids,
+            own_lesson_ids: idea.own_lesson_ids,
+            avoided_lesson_ids: idea.avoided_lesson_ids,
+            own_experiment_ids: idea.own_experiment_ids,
+            owner_preference_ids: idea.owner_preference_ids,
+            evidence_roots: idea.evidence_roots,
+            evidence_conflicts: idea.evidence_conflicts,
+            idea_confidence: idea.idea_confidence,
+            evidence_mode: idea.evidence_mode,
+            market_context_hash: idea.market_context_hash,
+          } : {}),
+        }
         : {}),
       ...(targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
         ? {
@@ -542,6 +651,8 @@ Deno.serve(async (req) => {
           why_this_idea: row.why_this_idea ?? null,
           feedback_outcome: feedbackContext?.outcome ?? null,
           hypothesis_key: feedbackContext?.hypothesis_key ?? null,
+          market_mechanic_key: row.market_mechanic_key ?? null,
+          novelty_status: row.novelty_status ?? null,
         } : {}),
         card_text: cardText(row, targetPlatform),
       })),
@@ -549,7 +660,52 @@ Deno.serve(async (req) => {
   }
 
   let saved: Array<Record<string, any>> = [];
-  if (targetPlatform === TARGET_PLATFORMS.TIKTOK &&
+  if (targetPlatform === TARGET_PLATFORMS.TIKTOK && marketIdeaContext?.active &&
+      marketIdeaContext.hypothesis_candidate && marketIdeaContext.hypothesis_key && batchKey && feedbackContext) {
+    const selectedLessons = feedbackContext.OWN_PERFORMANCE.selected_lessons.map((lesson) => lesson.lesson_id);
+    const avoidedLessons = feedbackContext.OWN_PERFORMANCE.avoided_lessons.map((lesson) => lesson.lesson_id);
+    const stableFeedbackContext = {
+      integration_version: marketIdeaContext.integration_version,
+      platform: "tiktok",
+      OWN_PERFORMANCE: {
+        source_type: "OWN_PERFORMANCE",
+        selected_lessons: feedbackContext.OWN_PERFORMANCE.selected_lessons,
+        avoided_lessons: feedbackContext.OWN_PERFORMANCE.avoided_lessons,
+        primary: feedbackContext.OWN_PERFORMANCE.primary,
+        prompt_framework: feedbackContext.OWN_PERFORMANCE.prompt_framework,
+      },
+      OWNER_PREFERENCE: marketIdeaContext.OWNER_PREFERENCE,
+      MARKET_REFERENCE: marketIdeaContext.MARKET_REFERENCE,
+      conflicts: marketIdeaContext.conflicts.map(({ field: _field, market_key: _key, ...conflict }) => conflict),
+    };
+    const { data, error } = await admin.rpc("persist_tiktok_market_feedback_batch", {
+      p_user_id: profile.id,
+      p_batch_key: batchKey,
+      p_context_hash: marketIdeaContext.context_hash,
+      p_hypothesis_key: marketIdeaContext.hypothesis_key,
+      p_hypothesis: { ...marketIdeaContext.hypothesis_candidate, feedback_context: stableFeedbackContext },
+      p_selected_lesson_ids: selectedLessons,
+      p_avoided_lesson_ids: avoidedLessons,
+      p_api_metric_snapshot_ids: feedbackContext.OWN_PERFORMANCE.metric_provenance.api_snapshot_ids,
+      p_studio_metric_ids: feedbackContext.OWN_PERFORMANCE.metric_provenance.studio_metric_ids,
+      p_prompt_framework_id: feedbackContext.OWN_PERFORMANCE.prompt_framework!.id,
+      p_prompt_framework_version: feedbackContext.OWN_PERFORMANCE.prompt_framework!.version_label,
+      p_market_context: stableFeedbackContext,
+      p_candidates: rows.map((row) => ({
+        slug: row.slug, animal: row.animal, hook: row.hook, line: row.line,
+        prompt: row.prompt, why_this_idea: row.why_this_idea, idea_pattern: row.idea_pattern,
+        market_mechanic_key: row.market_mechanic_key, novelty_status: row.novelty_status,
+        market_reference_ids: row.market_reference_ids, market_dna_ids: row.market_dna_ids,
+        own_lesson_ids: row.own_lesson_ids, avoided_lesson_ids: row.avoided_lesson_ids,
+        own_experiment_ids: row.own_experiment_ids, owner_preference_ids: row.owner_preference_ids,
+        evidence_roots: row.evidence_roots, evidence_conflicts: row.evidence_conflicts,
+        idea_confidence: row.idea_confidence, evidence_mode: row.evidence_mode,
+        market_context_hash: row.market_context_hash,
+      })),
+    });
+    if (error) throw error;
+    saved = Array.isArray(data) ? data : [];
+  } else if (targetPlatform === TARGET_PLATFORMS.TIKTOK &&
       feedbackContext?.outcome === "HYPOTHESIS" && feedbackContext.hypothesis_candidate &&
       feedbackContext.hypothesis_key && batchKey) {
     const selectedLessons = feedbackContext.OWN_PERFORMANCE.selected_lessons

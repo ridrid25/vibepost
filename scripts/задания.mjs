@@ -258,7 +258,7 @@ if (команда === 'список') {
       // POST-05 extends the accepted POST-04 RPC in place. YouTube now gets
       // the same owner-gated, hash-checked, idempotent provenance boundary;
       // direct PATCH can no longer bypass the creative/evidence chain.
-      const saveResponse = await fetch(`${url}/rest/v1/rpc/persist_tiktok_prompt_provenance`, {
+      const saveResponse = await fetch(`${url}/rest/v1/rpc/persist_tiktok_prompt_provenance_v2`, {
         method: 'POST', headers: h,
         body: JSON.stringify({
           p_mode: 'CLAUDE_TASK',

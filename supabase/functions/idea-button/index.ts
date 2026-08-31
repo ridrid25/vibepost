@@ -64,11 +64,25 @@ function trustedTaskContext(
       feedback_context_hash: idea.feedback_context_hash ?? null,
       evidence: learningEvidence ?? { selected_lessons: [], avoided_patterns: [] },
     };
+    const marketReference = idea.market_context_hash ? {
+      source_type: "MARKET_REFERENCE",
+      mechanics: idea.evidence_roots?.MARKET_REFERENCE?.mechanics ?? [],
+      changed_variable: idea.changed_variable ?? null,
+      confidence: idea.idea_confidence ?? "LOW",
+      limitations: (idea.evidence_conflicts ?? []).map((entry: Record<string, unknown>) => ({
+        conflict_type: entry.conflict_type, resolution: entry.resolution,
+        confidence: entry.confidence, limitations: entry.limitations,
+      })),
+    } : { source_type: "MARKET_REFERENCE", mechanics: [] };
+    const marketAvoidance = idea.evidence_roots?.OWNER_PREFERENCE?.market_avoidance ?? [];
     return `target_platform=tiktok; сохранить существующий current production house format. ` +
       `TRUSTED OWN_PERFORMANCE: ${JSON.stringify(ownPerformance)}. ` +
       `OWNER_PREFERENCE (не performance evidence): ${JSON.stringify(ownerPreference ?? {
         source_type: "OWNER_PREFERENCE", approved: [], rejected: [],
-      })}. Rejected lesson IDs — только avoidance. Изменять ровно ` +
+      })}; market_avoidance=${JSON.stringify(marketAvoidance)}. ` +
+      `SANITIZED MARKET_REFERENCE (не own result): ${JSON.stringify(marketReference)}. ` +
+      `Source URL, creator identity, caption/transcript и exact shots не использовать. ` +
+      `Rejected lesson IDs — только avoidance. Изменять ровно ` +
       `${String(idea.changed_variable ?? "NO_STRONG_HYPOTHESIS")}; constants не менять.`;
   }
   const metadata = {
@@ -440,7 +454,7 @@ ${выбранная}
   }
 
   const { data: idea } = await admin
-    .from("video_ideas").select("id,user_id,status,route,decided_at,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints,hypothesis_id,selected_lesson_ids,avoided_lesson_ids,changed_variable,experiment_constants,prompt_framework_id,prompt_framework_version,feedback_context_hash,youtube_feedback_context_hash,own_experiment_ids,market_reference_ids,evidence_roots,evidence_conflicts,idea_confidence,evidence_mode")
+    .from("video_ideas").select("id,user_id,status,route,decided_at,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints,hypothesis_id,selected_lesson_ids,avoided_lesson_ids,changed_variable,experiment_constants,prompt_framework_id,prompt_framework_version,feedback_context_hash,youtube_feedback_context_hash,own_experiment_ids,market_reference_ids,market_dna_ids,owner_preference_ids,evidence_roots,evidence_conflicts,idea_confidence,evidence_mode,market_context_hash,market_mechanic_key,novelty_status")
     .eq("id", ideaId).eq("user_id", profile.id).maybeSingle();
   if (!idea) {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Идея не найдена" });
@@ -545,7 +559,7 @@ ${выбранная}
   if (action === "pay") {
     if (idea.prompt) {
       if (["tiktok", "youtube_shorts"].includes(idea.target_platform)) {
-        const { error: provenanceError } = await admin.rpc("persist_tiktok_prompt_provenance", {
+        const { error: provenanceError } = await admin.rpc("persist_tiktok_prompt_provenance_v2", {
           p_mode: "OWNER_SELECTED_EXISTING",
           p_video_idea_id: idea.id,
           p_claude_task_id: null,
