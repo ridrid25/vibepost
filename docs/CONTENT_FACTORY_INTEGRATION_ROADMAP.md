@@ -13,7 +13,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 | P1 Cross-System Creative Identity | Store platform-neutral references from POST-01 `creative_id` to idea/incoming/publication rows; resolve, never copy, existing metrics. |
 | P2 TikTok Feedback-to-Idea | POST-04 `PASS/ACCEPTED`: existing lessons feed a deterministic context, one evidence-bound hypothesis and candidate ideas; explicit owner choice gates the existing prompt path. |
 | P3 YouTube Own-Content Learning | POST-05 `PASS/ACCEPTED`: own `published_shorts_stats` feed the existing experiment/analysis/lesson memory through a narrow YouTube metric adapter and continue into an owner-gated idea/prompt. |
-| P4 TikTok Market Intelligence | POST-06 discovery complete, implementation not started: use semi-manual Creative Center/owner references plus bounded official oEmbed validation; MARKET stays separate from OWN and OWNER evidence. |
+| P4 TikTok Market Intelligence | POST-06 discovery and POST-07 implementation v1 complete: deliberate owner references use bounded official oEmbed, append-only FACT/DNA evidence and PREVIEW-only MARKET context; MARKET stays separate from OWN and OWNER evidence. |
 | P5 Parent/Mutation Lineage | Add explicit parent and changed-variable lineage through a separate accepted contract. |
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
@@ -38,6 +38,12 @@ No broad public-organic TikTok API is available to the current commercial person
 
 Future storage should be two narrow platform-neutral entities inside the existing VibePost DB: market-reference identity/workflow plus append-only typed FACT/DNA evidence. A selected reference enters the existing POST-04 Feedback Context Builder only through a separate `MARKET_REFERENCE` root. It cannot create an experiment verdict, lesson or confirmed own-account pattern. Owner dispositions remain `OWNER_PREFERENCE`; no production migration or code was created in POST-06.
 
+## POST-07 P4 implementation v1 boundary
+
+VibePost now owns two narrow additive entities: owner-scoped `market_references` and append-only `market_reference_evidence`. The only resolver is one bounded official TikTok oEmbed request for each deliberate, strictly validated URL. It persists normalized identity facts with explicit `OBSERVED / UNKNOWN / UNSUPPORTED`; provider HTML, thumbnails and media never persist. Owner dispositions remain `OWNER_PREFERENCE`. Only `TAKE` or `INTERESTING_MECHANIC` references may receive bounded `HUMAN_REVIEW` DNA, and only an immutable `ACCEPTED` DNA version enters preview.
+
+The preview wraps the accepted POST-04 builder without changing it and exposes independent `OWN_PERFORMANCE`, `OWNER_PREFERENCE` and `MARKET_REFERENCE` roots for exactly one selected reference. It creates no hypothesis, idea, prompt, experiment result or lesson and cannot start production/publishing. There is no crawling, scraping, media download, live collector change or Generator interface change.
+
 ## Do not build
 
 - no Creative Memory database;
@@ -49,4 +55,4 @@ Future storage should be two narrow platform-neutral entities inside the existin
 - no metric copying into identity rows;
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
-POST-06 source evidence and the recommended bounded implementation slice are coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md` in Text Factory.
+POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 implementation evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md` in Text Factory.
