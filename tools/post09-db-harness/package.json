@@ -1,0 +1,9 @@
+{
+  "name": "vibepost-post09-db-harness",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.8"
+  }
+}

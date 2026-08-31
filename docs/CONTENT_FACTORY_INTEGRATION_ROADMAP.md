@@ -14,7 +14,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 | P2 TikTok Feedback-to-Idea | POST-04 `PASS/ACCEPTED`: existing lessons feed a deterministic context, one evidence-bound hypothesis and candidate ideas; explicit owner choice gates the existing prompt path. |
 | P3 YouTube Own-Content Learning | POST-05 `PASS/ACCEPTED`: own `published_shorts_stats` feed the existing experiment/analysis/lesson memory through a narrow YouTube metric adapter and continue into an owner-gated idea/prompt. |
 | P4 TikTok Market Intelligence | POST-08 `PASS/ACCEPTED`: accepted structural MARKET evidence now enters the existing owner-gated TikTok idea/prompt path beside separate OWN and OWNER roots; it remains only a hypothesis source and cannot create verdicts or lessons. |
-| P5 Parent/Mutation Lineage | Add explicit parent and changed-variable lineage through a separate accepted contract. |
+| P5 Parent/Mutation Lineage | POST-09 `PASS/ACCEPTED`: immutable canonical parent/child relations bind exact one-variable platform proofs to existing experiments and expose read-only attribution/lesson traversal. |
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
 | P8 Lesson Freshness | Later weight existing lessons by evidence count, confirmation date, confidence, contradictions and recency. |
@@ -50,6 +50,12 @@ The existing POST-04 Feedback Context Builder remains authoritative for `OWN_PER
 
 Market mechanics are reduced to an abstract, anti-copy context. Source URLs, creator identity, captions, scripts and source identifiers cannot reach the idea model or production prompt. A market-only proposal remains a LOW-confidence `HYPOTHESIS`, changes one material variable, preserves constants and requires explicit owner selection. Candidate and prompt records retain internal evidence IDs and conflict provenance; the existing Generator interface, tuned settings, collectors, verdict/lesson logic and publishing gate remain unchanged. Market evidence cannot create a verdict or lesson, and no candidate starts production automatically.
 
+## POST-09 P5 lineage boundary
+
+The existing POST-03 `creative_id` is the only creative node identity. One narrow, platform-neutral and immutable `creative_mutations` relation records a canonical parent, one of five bounded mutation kinds, the declared material variable and source hypothesis. Branches and multi-generation traversal are supported; an owner-scoped transaction lock plus ancestor recheck rejects self-links, cross-owner links and cycles. Exact replay is idempotent, while a different declaration for the same child fails closed. Historical creatives are `LEGACY_UNLINKED`; no title/date/prompt inference or bulk backfill exists. Market references, owner preferences, render retries and non-material prompt edits never become parent creatives.
+
+Existing TikTok and YouTube experiments may attach one immutable platform proof to the canonical mutation. The proof contains exact structured parent/child vectors, a computed constants snapshot, deterministic diff and contract hash. Binding requires the existing hypothesis, one changed variable and platform publications to resolve to the same parent/child creative IDs. Read-only attribution reuses the current experiment verdict, comparable checkpoint metrics and lesson stores; missing or malformed provenance remains `UNKNOWN`. No experiment, verdict, lesson, analytics or Creative Memory engine was added, and no live data, publisher or Generator interface changed.
+
 ## Do not build
 
 - no Creative Memory database;
@@ -61,4 +67,4 @@ Market mechanics are reduced to an abstract, anti-copy context. Source URLs, cre
 - no metric copying into identity rows;
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
-POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md` in Text Factory.
+POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md`; POST-09 lineage evidence is in `POST_09_CREATIVE_MUTATION_LINEAGE.md` in Text Factory.
