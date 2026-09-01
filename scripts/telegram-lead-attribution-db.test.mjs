@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PGlite } from "../tools/post09-db-harness/node_modules/@electric-sql/pglite/dist/index.js";
 
+const prerequisite = readFileSync("supabase/migrations/20260831235958_creative_identity_owner_anchor.sql", "utf8");
 const migration = readFileSync("supabase/migrations/20260901000002_telegram_lead_attribution_v1.sql", "utf8");
 const userA = "10000000-0000-4000-8000-000000000001";
 const userB = "10000000-0000-4000-8000-000000000002";
@@ -24,8 +25,7 @@ $$;
 create table auth.users(id uuid primary key);
 create table public.posts(id uuid primary key,user_id uuid not null references auth.users(id));
 create table public.creative_identity_map(
-  id uuid primary key,user_id uuid not null references auth.users(id),creative_id text not null,
-  unique(id,user_id)
+  id uuid primary key,user_id uuid not null references auth.users(id),creative_id text not null
 );
 grant select on public.posts,public.creative_identity_map to authenticated,service_role;
 `;
@@ -33,6 +33,7 @@ grant select on public.posts,public.creative_identity_map to authenticated,servi
 async function setup() {
   const db = new PGlite();
   await db.exec(bootstrap);
+  await db.exec(prerequisite);
   await db.exec(migration);
   await db.query("insert into auth.users(id) values ($1),($2)", [userA, userB]);
   await db.query("insert into public.posts(id,user_id) values ($1,$2)", [postA, userA]);

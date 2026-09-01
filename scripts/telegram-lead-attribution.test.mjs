@@ -15,6 +15,8 @@ import {
 } from "../supabase/functions/_shared/telegram-lead-attribution.mjs";
 
 const migration = readFileSync("supabase/migrations/20260901000002_telegram_lead_attribution_v1.sql", "utf8");
+const prerequisite = readFileSync("supabase/migrations/20260831235958_creative_identity_owner_anchor.sql", "utf8");
+const telegramIdentity = readFileSync("supabase/migrations/20260831235959_telegram_identity_semantic.sql", "utf8");
 const issuer = readFileSync("supabase/functions/issue-telegram-attribution/index.ts", "utf8");
 const validator = readFileSync("supabase/functions/validate-telegram-attribution/index.ts", "utf8");
 const resolver = readFileSync("supabase/functions/telegram-business-attribution/index.ts", "utf8");
@@ -132,4 +134,14 @@ test("production boundary is preview-only and contains no raw-token persistence 
   assert.match(issuer, /RAW_TOKEN_UNAVAILABLE/u);
   assert.match(supabaseConfig,
     /\[functions\.validate-telegram-attribution\]\s*verify_jwt\s*=\s*false/u);
+  assert.match(prerequisite, /creative_identity_map_post12_owner_unique[\s\S]*unique \(id, user_id\)/u);
+  assert.match(telegramIdentity, /platform in \('tiktok', 'youtube_shorts', 'telegram'\)/u);
+  assert.match(telegramIdentity, /else 'UNSUPPORTED'/u);
+  assert.match(telegramIdentity, /else null::bigint/u);
+  const telegramUpsert = telegramIdentity.slice(
+    telegramIdentity.indexOf("create or replace function public.upsert_telegram_creative_identity_mapping"),
+    telegramIdentity.indexOf("revoke execute on function public.upsert_telegram_creative_identity_mapping"),
+  );
+  assert.doesNotMatch(telegramUpsert, /'tiktok'|'youtube_shorts'/u);
+  assert.match(telegramUpsert, /p_source_hash, p_handoff_id, 'telegram'/u);
 });
