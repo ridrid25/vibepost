@@ -25,3 +25,17 @@ verify_jwt = false
 # secret. It intentionally has no Supabase user JWT.
 [functions.validate-telegram-attribution]
 verify_jwt = false
+
+# POST-13C uses Telegram's webhook secret header plus a fail-closed singleton
+# runtime state. It does not accept a Supabase JWT on webhook/activation routes.
+[functions.content-factory-leads-canary]
+verify_jwt = false
+
+[functions.activate-content-factory-leads-cta]
+verify_jwt = true
+
+[functions.rollback-content-factory-leads-canary]
+verify_jwt = true
+
+[functions.content-factory-leads-canary-retry-control]
+verify_jwt = true
