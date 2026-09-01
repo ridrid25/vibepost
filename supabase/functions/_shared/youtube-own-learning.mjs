@@ -1,6 +1,10 @@
 import { canonicalJson, sha256Hex } from "./tiktok-feedback-context.mjs";
+import {
+  LESSON_EFFECTIVE_POLICY_VERSION,
+  evaluateLessonsForFeedback,
+} from "./lesson-effective-weight.mjs";
 
-export const YOUTUBE_OWN_CONTEXT_VERSION = 1;
+export const YOUTUBE_OWN_CONTEXT_VERSION = 2;
 export const YOUTUBE_CHECKPOINTS = Object.freeze({
   "1h": { hours: 1, tolerance: 0.5 },
   "6h": { hours: 6, tolerance: 0.5 },
@@ -20,7 +24,6 @@ export const YOUTUBE_UNSUPPORTED_METRICS = Object.freeze([
 ]);
 
 const CONFIDENCE = { HIGH: 3, MEDIUM: 2, LOW: 1 };
-const POSITIVE = new Set(["WINNING_PATTERN", "CONFIRMED_LESSON"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function finite(value) {
@@ -198,22 +201,6 @@ export function evaluateYoutubeExperiment({
   };
 }
 
-function latestAnalyses(rows) {
-  const sorted = [...(rows ?? [])].sort((a, b) =>
-    String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) ||
-    String(a.id).localeCompare(String(b.id)));
-  const result = new Map();
-  for (const row of sorted) if (!result.has(row.experiment_id)) result.set(row.experiment_id, row);
-  return result;
-}
-
-function citedExperimentIds(lesson, bindings) {
-  const evidence = Array.isArray(lesson?.evidence) ? lesson.evidence : [];
-  const ids = evidence.map((entry) => entry?.experiment_id).filter((value) => UUID.test(value ?? ""));
-  for (const row of bindings ?? []) if (row.lesson_id === lesson.id && UUID.test(row.experiment_id ?? "")) ids.push(row.experiment_id);
-  return [...new Set(ids)];
-}
-
 function lessonOrder(a, b) {
   const status = { CONFIRMED: 3, SUPPORTED: 2, REJECTED: 1 };
   return (status[b.status] ?? 0) - (status[a.status] ?? 0) ||
@@ -250,40 +237,42 @@ export function lowerConflictConfidence(value) {
 }
 
 export async function buildYoutubeFeedbackContext(input) {
-  const experiments = (input.experiments ?? []).filter((row) => row.platform === "youtube_shorts");
+  const allExperiments = input.experiments ?? [];
+  const experiments = allExperiments.filter((row) => row.platform === "youtube_shorts");
   const byExperiment = new Map(experiments.map((row) => [row.id, row]));
-  const latest = latestAnalyses((input.analyses ?? []).filter((row) => row.platform === "youtube_shorts"));
+  const allAnalyses = input.analyses ?? [];
+  const analysesById = new Map(allAnalyses.map((row) => [row.id, row]));
   const bindings = input.lesson_bindings ?? [];
   const publications = new Map((input.publications ?? []).map((row) => [row.id, row]));
   const mappings = new Map((input.mappings ?? []).map((row) => [row.youtube_short_row_id, row]));
   const snapshots = new Map((input.snapshots ?? []).map((row) =>
     [`${row.short_id}|${row.polled_at}`, row]));
-  const positive = [];
-  const avoided = [];
-  for (const lesson of (input.lessons ?? []).filter((row) => row.source_platform === "youtube_shorts")) {
-    const ids = citedExperimentIds(lesson, bindings).filter((id) => byExperiment.has(id));
-    const conclusions = ids.map((id) => latest.get(id)?.conclusion).filter(Boolean);
-    const pass = new Set(ids.filter((id) => latest.get(id)?.conclusion === "PASS")).size;
-    const fail = new Set(ids.filter((id) => latest.get(id)?.conclusion === "FAIL")).size;
-    if (POSITIVE.has(lesson.category) && ["SUPPORTED", "CONFIRMED"].includes(lesson.status) &&
-        pass >= (lesson.status === "CONFIRMED" ? 3 : 2) && !conclusions.includes("FAIL")) {
-      positive.push({ ...lesson, experiment_ids: ids.filter((id) => latest.get(id)?.conclusion === "PASS") });
-    }
-    if (lesson.category === "FAILED_PATTERN" && lesson.status === "REJECTED" &&
-        fail >= 2 && !conclusions.includes("PASS")) {
-      avoided.push({ ...lesson, experiment_ids: ids.filter((id) => latest.get(id)?.conclusion === "FAIL") });
-    }
-  }
-  positive.sort(lessonOrder);
-  avoided.sort(lessonOrder);
-  const selected = positive.slice(0, 5);
-  const rejected = avoided.slice(0, 5);
   const framework = eligibleFramework(input.framework);
+  const lessons = (input.lessons ?? []).filter((row) => row.source_platform === "youtube_shorts");
+  const lessonById = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const effective = evaluateLessonsForFeedback({
+    lessons,
+    experiments: allExperiments,
+    analyses: allAnalyses,
+    mutations: input.mutations ?? [],
+    lesson_bindings: bindings,
+    target_platform: "youtube_shorts",
+    current_context: {
+      ...(input.current_context ?? {}),
+      ...(framework?.version_label ? { prompt_framework_version: framework.version_label } : {}),
+    },
+    evaluation_at: input.evaluation_at,
+  });
+  const shapeLesson = (state) => ({ ...lessonById.get(state.lesson_id),
+    experiment_ids: state.supporting_experiment_ids, effective_evidence: state });
+  const selected = effective.positive.slice(0, 5).map(shapeLesson);
+  const rejected = effective.avoidance.slice(0, 5).map(shapeLesson);
   const rejectedSignatures = new Set((input.hypotheses ?? []).filter((row) =>
     row.status === "REJECTED" && row.feedback_context?.platform === "youtube_shorts")
     .map((row) => canonicalJson({ changed_variable: row.changed_variable, constants: row.constants ?? {} })));
-  const primary = selected.flatMap((lesson) => lesson.experiment_ids.map((id) => ({ lesson, experiment: byExperiment.get(id) })))
-    .find(({ experiment }) => experiment && latest.get(experiment.id)?.conclusion === "PASS" &&
+  const primary = selected.flatMap((lesson) => lesson.effective_evidence.supporting_evidence
+    .map((evidence) => ({ lesson, experiment: byExperiment.get(evidence.experiment_id), evidence })))
+    .find(({ experiment, evidence }) => experiment && evidence.conclusion === "PASS" &&
       validateYoutubeMaterialChange(experiment.control_material_vector, experiment.variant_material_vector,
         experiment.changed_variable, experiment.constants).valid &&
       !rejectedSignatures.has(canonicalJson({
@@ -322,9 +311,11 @@ export async function buildYoutubeFeedbackContext(input) {
     category: lesson.category,
     status: lesson.status,
     confidence: lesson.confidence,
-    conclusive_evidence: lesson.experiment_ids.map((experimentId) => {
+    effective_evidence: lesson.effective_evidence,
+    conclusive_evidence: lesson.effective_evidence.supporting_evidence.map((effectiveEvidence) => {
+      const experimentId = effectiveEvidence.experiment_id;
       const experiment = byExperiment.get(experimentId);
-      const analysis = latest.get(experimentId);
+      const analysis = analysesById.get(effectiveEvidence.analysis_id);
       const binding = (bindings ?? []).find((row) => row.lesson_id === lesson.id &&
         row.experiment_id === experimentId) ?? null;
       const shortId = binding?.short_id ?? analysis?.youtube_short_id ?? null;
@@ -362,6 +353,10 @@ export async function buildYoutubeFeedbackContext(input) {
   });
   const own = {
     source_type: "OWN_PERFORMANCE",
+    lesson_effective_policy_version: LESSON_EFFECTIVE_POLICY_VERSION,
+    evaluation_at: input.evaluation_at,
+    lesson_effective_states: effective.states,
+    controlled_retests: effective.controlled_retests,
     selected_lessons: selected.map(evidenceShape),
     avoided_lessons: rejected.map(evidenceShape),
     recent_results: [...experiments].filter((row) => ["PASS", "FAIL", "INCONCLUSIVE"].includes(row.result))
@@ -374,6 +369,7 @@ export async function buildYoutubeFeedbackContext(input) {
       changed_variable: primary.experiment.changed_variable,
       constants: primary.experiment.constants,
       control_material_vector: primary.experiment.control_material_vector,
+      effective_evidence: primary.lesson.effective_evidence,
     } : null,
   };
   const hypothesis = primary && framework ? {
@@ -382,7 +378,8 @@ export async function buildYoutubeFeedbackContext(input) {
     constants: primary.experiment.constants,
     expected_effect: `Improve ${primary.experiment.success_metrics.primary_metric} at ${primary.experiment.success_metrics.checkpoint}`,
     evidence: [{ lesson_id: primary.lesson.id, experiment_id: primary.experiment.id,
-      analysis_id: latest.get(primary.experiment.id)?.id }],
+      analysis_id: primary.evidence.analysis_id, policy_version: LESSON_EFFECTIVE_POLICY_VERSION,
+      effective_state: primary.lesson.effective_evidence }],
     status: "HYPOTHESIS",
     confidence: "LOW",
   } : null;
@@ -404,6 +401,7 @@ export async function buildYoutubeFeedbackContext(input) {
     hypothesis_key: hypothesisKey,
     context_hash: contextHash,
     limitations: hypothesis ? [] : ["no_verified_youtube_own_hypothesis"],
+    controlled_retests: effective.controlled_retests,
   };
 }
 

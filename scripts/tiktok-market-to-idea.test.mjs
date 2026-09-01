@@ -267,7 +267,9 @@ test("production wiring uses the sole existing feedback builder and market-aware
   assert.match(source, /buildTikTokFeedbackContext/);
   assert.match(source, /buildTikTokMarketIdeaContext/);
   assert.match(source, /persist_tiktok_market_feedback_batch/);
-  assert.match(source, /marketFeedbackBatchKey/);
+  assert.match(source, /loadStoredDecision/);
+  assert.match(source, /batchKey = await feedbackBatchKey\(profile\.id, requestId\)/);
+  assert.doesNotMatch(source, /batchKey = await marketFeedbackBatchKey/);
   assert.doesNotMatch(source.slice(source.indexOf("async function loadTikTokMarketInputs"),
     source.indexOf("async function loadYoutubeFeedbackInputs")), /\.limit\(5\)/);
 });

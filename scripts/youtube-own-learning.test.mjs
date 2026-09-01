@@ -13,6 +13,10 @@ import {
   youtubeFeedbackBatchKey,
   youtubeMinimumViews,
 } from "../supabase/functions/_shared/youtube-own-learning.mjs";
+import {
+  canonicalLessonEffectiveJson,
+  lessonProofContractHash,
+} from "../supabase/functions/_shared/lesson-effective-weight.mjs";
 
 const root = new URL("..", import.meta.url);
 const source = (relative) => readFileSync(new URL(relative, root), "utf8");
@@ -39,7 +43,7 @@ function contextFixture() {
       hypothesis: "Reference pattern improves likes",
       changed_variable: "causal_pattern_class", constants: constants(),
       success_metrics: { primary_metric: "like_rate", direction: "increase", checkpoint: "24h", mde: 0.01 },
-      control_material_vector: vector(), variant_material_vector: vector(`PATTERN_${index + 2}`),
+      control_material_vector: vector(), variant_material_vector: vector("PATTERN_2"),
     })),
     ...failIds.map((experimentId, index) => ({
       id: experimentId, platform: "youtube_shorts", result: "FAIL",
@@ -51,6 +55,38 @@ function contextFixture() {
     })),
     { id: id(99), platform: "tiktok", result: "PASS", updated_at: iso(20) },
   ];
+  const mutations = [];
+  for (const [index, experiment] of experiments.filter((row) => row.platform === "youtube_shorts").entries()) {
+    const rootCreative = creative(5000 + index * 2);
+    const childCreative = creative(5001 + index * 2);
+    const rootMutation = { id: id(5000 + index * 2), child_creative_id: rootCreative,
+      parent_creative_id: null, changed_variable: null, mutation_kind: "NEW_CONCEPT" };
+    const mutation = { id: id(5001 + index * 2), child_creative_id: childCreative,
+      parent_creative_id: rootCreative, changed_variable: experiment.changed_variable,
+      mutation_kind: "CONTROLLED_MUTATION", source_hypothesis_id: id(7000 + index),
+      prior_evidence_experiment_id: null };
+    const materialDiff = { schema_version: 1,
+      changed_material_variables: [experiment.changed_variable],
+      unchanged_material_variables: YOUTUBE_MATERIAL_FIELDS.filter((field) =>
+        field !== experiment.changed_variable), unknown_comparisons: [], limitations: [] };
+    const proofContract = { material_schema: "youtube_v1",
+      parent_material_vector: experiment.control_material_vector,
+      child_material_vector: experiment.variant_material_vector,
+      constants_snapshot: experiment.constants, material_diff: materialDiff };
+    Object.assign(experiment, {
+      creative_mutation_id: mutation.id,
+      hypothesis_id: mutation.source_hypothesis_id,
+      control_creative_id: rootCreative,
+      variant_creative_id: childCreative,
+      lineage_material_schema: "youtube_v1",
+      lineage_parent_material_vector: experiment.control_material_vector,
+      lineage_child_material_vector: experiment.variant_material_vector,
+      lineage_constants_snapshot: experiment.constants,
+      lineage_material_diff: materialDiff,
+      lineage_contract_hash: lessonProofContractHash(canonicalLessonEffectiveJson(proofContract)),
+    });
+    mutations.push(rootMutation, mutation);
+  }
   const analyses = experiments.filter((row) => row.platform === "youtube_shorts").map((row, index) => ({
     id: id(100 + index), user_id: id(1), platform: "youtube_shorts",
     experiment_id: row.id, conclusion: row.result, created_at: iso(18 + index),
@@ -70,7 +106,8 @@ function contextFixture() {
       updated_at: iso(23), evidence: passIds.map((experiment_id) => ({ experiment_id })) },
   ];
   return {
-    lessons, experiments, analyses, lesson_bindings: [],
+    lessons, experiments, analyses, mutations, lesson_bindings: [],
+    evaluation_at: "2026-08-24T00:00:00Z",
     framework: { id: id(50), version_label: "PF-v1", status: "STANDARD", is_current: true,
       prompt_framework_rules: [{ id: id(51), status: "STANDARD", confidence: "HIGH", updated_at: iso(20) }] },
     owner_ideas: [
@@ -267,6 +304,7 @@ test("OWN context carries analysis, publication, snapshot, creative and limitati
   data.snapshots = [{ short_id: id(71), polled_at: iso(24), views: 1000, likes: 100, comments: null }];
   data.experiments[0].variant_youtube_short_id = id(71);
   data.experiments[0].variant_creative_id = creative(9);
+  data.mutations.find((row) => row.id === data.experiments[0].creative_mutation_id).child_creative_id = creative(9);
   data.analyses[0].youtube_short_id = id(71);
   data.analyses[0].youtube_snapshot_polled_at = iso(24);
   data.analyses[0].metric_sources = { store: "published_shorts_stats" };
@@ -336,12 +374,14 @@ test("shorts collector is service-only, configured-owner scoped and null-preserv
   assert.match(edge, /user_id: ownerId/);
 });
 
-test("feedback loader paginates cited evidence and separates owner decision classes", () => {
+test("feedback loader paginates full contradiction evidence and separates owner decision classes", () => {
   const suggest = source("supabase/functions/suggest-ideas/index.ts");
   assert.match(suggest, /async function loadYoutubeFeedbackInputs/);
   assert.match(suggest, /collectPages/);
   assert.match(suggest, /inChunks/);
-  assert.match(suggest, /citedIds/);
+  assert.match(suggest, /const experiments = await collectPages[\s\S]*from\("experiments"\)/);
+  assert.match(suggest, /const analyses = await inChunks\(experimentIds/);
+  assert.match(suggest, /from\("creative_mutations"\)/);
   assert.match(suggest, /\.in\("route", \["self", "paid"\]\)/);
   assert.match(suggest, /\.is\("route", null\)\.eq\("status", "rejected"\)/);
   assert.match(suggest, /\.eq\("status", "REJECTED"\)/);

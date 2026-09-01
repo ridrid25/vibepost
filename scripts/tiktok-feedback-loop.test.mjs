@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
@@ -14,6 +15,51 @@ import {
 
 const id = (value) => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const iso = (day) => `2026-08-${String(day).padStart(2, "0")}T00:00:00Z`;
+const creative = (value) => `creative-${String(value).padStart(64, "0")}`;
+const lineageFields = ["topic", "content_format", "duration_bin", "character_id", "visual_style_id",
+  "hook_type", "pacing_profile", "punch_type", "loop_type", "camera_profile", "prompt_framework_version"];
+
+function bindProof(experiment, index) {
+  const changed = experiment.changed_variable;
+  const base = {
+    topic: "finance", content_format: "sketch", duration_bin: "short", character_id: "fox",
+    visual_style_id: "quiet-editorial", hook_type: "after", pacing_profile: "fast",
+    punch_type: "reversal", loop_type: "visual-return", camera_profile: "dynamic",
+    prompt_framework_version: "PF-v1",
+  };
+  const parentValue = changed === "camera_profile" ? "static" : `before-${changed}`;
+  const childValue = changed === "camera_profile" ? "dynamic" : `after-${changed}`;
+  const parent = { ...base, [changed]: parentValue };
+  const child = { ...base, [changed]: childValue };
+  const constants = Object.fromEntries(lineageFields.filter((field) => field !== changed)
+    .map((field) => [field, parent[field]]));
+  const rootCreative = creative(5000 + index * 2);
+  const childCreative = creative(5001 + index * 2);
+  const rootMutation = { id: id(5000 + index * 2), child_creative_id: rootCreative,
+    parent_creative_id: null, changed_variable: null, mutation_kind: "NEW_CONCEPT" };
+  const mutation = { id: id(5001 + index * 2), child_creative_id: childCreative,
+    parent_creative_id: rootCreative, changed_variable: changed, mutation_kind: "CONTROLLED_MUTATION",
+    source_hypothesis_id: id(7000 + index), prior_evidence_experiment_id: null };
+  const materialDiff = { schema_version: 1, changed_material_variables: [changed],
+    unchanged_material_variables: lineageFields.filter((field) => field !== changed),
+    unknown_comparisons: [], limitations: [] };
+  const proofContract = { material_schema: "tiktok_v1", parent_material_vector: parent,
+    child_material_vector: child, constants_snapshot: constants, material_diff: materialDiff };
+  Object.assign(experiment, {
+    creative_mutation_id: mutation.id,
+    hypothesis_id: mutation.source_hypothesis_id,
+    control_creative_id: null,
+    variant_creative_id: null,
+    constants,
+    lineage_material_schema: "tiktok_v1",
+    lineage_parent_material_vector: parent,
+    lineage_child_material_vector: child,
+    lineage_constants_snapshot: constants,
+    lineage_material_diff: materialDiff,
+    lineage_contract_hash: createHash("sha256").update(canonicalJson(proofContract)).digest("hex"),
+  });
+  return [rootMutation, mutation];
+}
 
 function fixture() {
   const passIds = [id(101), id(102), id(103)];
@@ -21,8 +67,9 @@ function fixture() {
   const experiments = [
     ...passIds.map((experimentId, index) => ({
       id: experimentId,
+      platform: "tiktok",
       changed_variable: index === 2 ? "hook_type" : "content_format",
-      constants: index === 2 ? { character_id: "fox", pacing_profile: "fast" } : { family: "money" },
+      constants: {},
       success_metrics: {
         primary_metric: "share_rate", direction: "increase", checkpoint: "24h", mde: 0.02,
       },
@@ -33,6 +80,7 @@ function fixture() {
     })),
     ...failIds.map((experimentId, index) => ({
       id: experimentId,
+      platform: "tiktok",
       changed_variable: "camera_profile",
       constants: { camera_profile: "static", failed_context: index },
       success_metrics: {
@@ -44,13 +92,13 @@ function fixture() {
       updated_at: iso(15 + index),
     })),
     {
-      id: id(301), changed_variable: "duration_bin", constants: {}, status: "ANALYZED",
+      id: id(301), platform: "tiktok", changed_variable: "duration_bin", constants: {}, status: "ANALYZED",
       result: "PASS", success_metrics: {
         primary_metric: "like_rate", direction: "increase", checkpoint: "24h", mde: 0.01,
       }, created_at: iso(25), updated_at: iso(25),
     },
     {
-      id: id(104), changed_variable: "hook_type", constants: { character_id: "fox" },
+      id: id(104), platform: "tiktok", changed_variable: "hook_type", constants: { character_id: "fox" },
       status: "RUNNING", result: "INCONCLUSIVE", success_metrics: {
         primary_metric: "share_rate", direction: "increase", checkpoint: "24h", mde: 0.02,
       }, created_at: iso(26), updated_at: iso(26),
@@ -58,41 +106,49 @@ function fixture() {
   ];
   const analyses = experiments.map((experiment, index) => ({
     id: id(400 + index),
+    platform: "tiktok",
     experiment_id: experiment.id,
     conclusion: experiment.result,
     created_at: iso(10 + index),
   }));
+  const mutations = experiments.flatMap((experiment, index) => bindProof(experiment, index));
   const lessons = [
     {
       id: id(1), lesson: "Короткий контрастный хук работает", category: "WINNING_PATTERN",
+      source_platform: "tiktok",
       status: "CONFIRMED", confidence: "HIGH", updated_at: iso(29),
       applicable_topics: [], videos_used: [id(701)],
-      evidence: [...passIds, id(104)].map((experiment_id) => ({ experiment_id })),
+      evidence: [passIds[2], id(104)].map((experiment_id) => ({ experiment_id })),
     },
     {
       id: id(2), lesson: "Поддержанный формат", category: "CONFIRMED_LESSON",
+      source_platform: "tiktok",
       status: "SUPPORTED", confidence: "HIGH", updated_at: iso(30),
       applicable_topics: [], videos_used: [id(702)],
       evidence: passIds.slice(0, 2).map((experiment_id) => ({ experiment_id })),
     },
     {
       id: id(3), lesson: "Не использовать неподвижную камеру", category: "FAILED_PATTERN",
+      source_platform: "tiktok",
       status: "REJECTED", confidence: "MEDIUM", updated_at: iso(28),
       applicable_topics: [], videos_used: [id(703)],
       evidence: failIds.map((experiment_id) => ({ experiment_id })),
     },
     {
       id: id(4), lesson: "Одиночное наблюдение", category: "HYPOTHESIS",
+      source_platform: "tiktok",
       status: "HYPOTHESIS", confidence: "LOW", updated_at: iso(30),
       applicable_topics: [], evidence: [{ experiment_id: passIds[0] }],
     },
     {
       id: id(5), lesson: "Только ипотека", category: "WINNING_PATTERN",
+      source_platform: "tiktok",
       status: "SUPPORTED", confidence: "HIGH", updated_at: iso(30),
       applicable_topics: ["ипотека"], evidence: passIds.slice(0, 2).map((experiment_id) => ({ experiment_id })),
     },
     {
       id: id(6), lesson: "Несовместимая категория", category: "FAILED_PATTERN",
+      source_platform: "tiktok",
       status: "SUPPORTED", confidence: "HIGH", updated_at: iso(30),
       applicable_topics: [], evidence: passIds.slice(0, 2).map((experiment_id) => ({ experiment_id })),
     },
@@ -108,7 +164,7 @@ function fixture() {
   const ideas = [
     { id: id(901), target_platform: "tiktok", status: "done", route: "self",
       decided_at: iso(30), created_at: iso(20), animal: "Лиса", hook: "ГДЕ ДЕНЬГИ?",
-      changed_variable: "hook_type", idea_pattern: ideaPattern("Лиса", "ГДЕ ДЕНЬГИ?") },
+      changed_variable: "content_format", idea_pattern: ideaPattern("Лиса", "ГДЕ ДЕНЬГИ?") },
     { id: id(902), target_platform: "tiktok", status: "rejected", route: null,
       decided_at: iso(29), created_at: iso(19), animal: "Крот", hook: "СНОВА КРЕДИТ?" },
     { id: id(903), target_platform: "tiktok", status: "new", route: null,
@@ -117,7 +173,8 @@ function fixture() {
       decided_at: iso(30), created_at: iso(30), animal: "Бобр", hook: "YOUTUBE" },
   ];
   return {
-    lessons, experiments, analyses, hypotheses: [], framework, ideas,
+    lessons, experiments, analyses, mutations, hypotheses: [], framework, ideas,
+    evaluation_at: "2026-09-01T00:00:00Z",
     snapshots: [{ id: id(950), video_id: id(701), collected_at: iso(30), source: "api",
       views: 1000, likes: 100, comments: 20, shares: 30 }],
     studio_metrics: [{ id: id(951), video_id: id(701), captured_at: iso(30),
@@ -138,9 +195,9 @@ function candidates() {
 test("selected lessons use exact category/status/conclusion eligibility and priority", async () => {
   const context = await buildTikTokFeedbackContext(fixture());
   assert.equal(context.outcome, "HYPOTHESIS");
-  assert.deepEqual(context.OWN_PERFORMANCE.selected_lessons.map((row) => row.lesson_id), [id(1), id(2)]);
+  assert.deepEqual(context.OWN_PERFORMANCE.selected_lessons.map((row) => row.lesson_id), [id(2), id(1)]);
   assert.ok(!context.OWN_PERFORMANCE.selected_lessons.some((row) => [id(4), id(6)].includes(row.lesson_id)));
-  assert.equal(context.OWN_PERFORMANCE.selected_lessons[0].lesson, "Короткий контрастный хук работает");
+  assert.equal(context.OWN_PERFORMANCE.selected_lessons[0].lesson, "Поддержанный формат");
   assert.ok(context.OWN_PERFORMANCE.selected_lessons.every((row) =>
     row.conclusive_evidence.every((evidence) => evidence.latest_conclusion === "PASS")));
   assert.ok(!canonicalJson(context.OWN_PERFORMANCE.selected_lessons).includes(id(104)));
@@ -176,8 +233,12 @@ test("framework selection keeps only current STANDARD/SUPPORTED rules", async ()
 
 test("primary experiment preserves one allowed changed variable and exact constants", async () => {
   const context = await buildTikTokFeedbackContext(fixture());
-  assert.equal(context.hypothesis_candidate.changed_variable, "hook_type");
-  assert.deepEqual(context.hypothesis_candidate.constants, { character_id: "fox", pacing_profile: "fast" });
+  assert.equal(context.hypothesis_candidate.changed_variable, "content_format");
+  assert.deepEqual(context.hypothesis_candidate.constants,
+    Object.fromEntries(lineageFields.filter((field) => field !== "content_format").map((field) =>
+      [field, { topic: "finance", content_format: "sketch", duration_bin: "short", character_id: "fox",
+        visual_style_id: "quiet-editorial", hook_type: "after", pacing_profile: "fast", punch_type: "reversal",
+        loop_type: "visual-return", camera_profile: "dynamic", prompt_framework_version: "PF-v1" }[field]])));
   assert.equal(MATERIAL_FIELDS.length, 10);
   assert.ok(!MATERIAL_FIELDS.includes("duration_bin"));
 });
@@ -221,7 +282,7 @@ test("verified rejected signature blocks a repeated hypothesis", async () => {
   const data = fixture();
   data.hypotheses = [{
     id: id(990), status: "REJECTED", changed_variable: "hook_type",
-    constants: { character_id: "fox", pacing_profile: "fast" },
+    constants: data.experiments.find((row) => row.id === id(103)).constants,
   }];
   const context = await buildTikTokFeedbackContext(data);
   assert.equal(context.outcome, "HYPOTHESIS");
@@ -303,8 +364,9 @@ test("YouTube response contract stays outside TikTok feedback additions", () => 
   assert.match(rowBlock, /targetPlatform === TARGET_PLATFORMS\.TIKTOK/);
   assert.match(rowBlock, /why_this_idea/);
   const youtubeBranch = suggest.slice(
-    suggest.indexOf("if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS)"),
-    suggest.indexOf("} else {", suggest.indexOf("if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS)")),
+    suggest.indexOf("if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS)", suggest.indexOf("let ideas:")),
+    suggest.indexOf("} else {", suggest.indexOf("if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS)",
+      suggest.indexOf("let ideas:"))),
   );
   assert.doesNotMatch(youtubeBranch, /TIKTOK_SCHEMA|why_this_idea|feedbackContext/);
 });
@@ -343,8 +405,8 @@ test("fixture E2E reaches an owner-selected prompt record with complete provenan
     prompt_framework_id: selected.prompt_framework_id,
   };
   assert.equal(promptRecord.hypothesis_id, hypothesis.id);
-  assert.deepEqual(promptRecord.selected_lesson_ids, [id(1), id(2)]);
+  assert.deepEqual(promptRecord.selected_lesson_ids, [id(2), id(1)]);
   assert.deepEqual(promptRecord.avoided_lesson_ids, [id(3)]);
-  assert.equal(promptRecord.changed_variable, "hook_type");
+  assert.equal(promptRecord.changed_variable, "content_format");
   assert.equal(selected.status, "approved");
 });

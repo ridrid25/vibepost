@@ -17,7 +17,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 | P5 Parent/Mutation Lineage | POST-09 `PASS/ACCEPTED`: immutable canonical parent/child relations bind exact one-variable platform proofs to existing experiments and expose read-only attribution/lesson traversal. |
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
-| P8 Lesson Freshness | Later weight existing lessons by evidence count, confirmation date, confidence, contradictions and recency. |
+| P8 Lesson Freshness | POST-10 `PASS/ACCEPTED`: derive versioned effective strength from immutable lesson history, lineage-independent support, recency, context and typed contradictions. |
 | P9 Business Attribution | Later link publications to external business events; Meta/Prodamus/CRM are outside POST-03. |
 
 ## POST-04 P2 boundary
@@ -56,6 +56,12 @@ The existing POST-03 `creative_id` is the only creative node identity. One narro
 
 Existing TikTok and YouTube experiments may attach one immutable platform proof to the canonical mutation. The proof contains exact structured parent/child vectors, a computed constants snapshot, deterministic diff and contract hash. Binding requires the existing hypothesis, one changed variable and platform publications to resolve to the same parent/child creative IDs. Read-only attribution reuses the current experiment verdict, comparable checkpoint metrics and lesson stores; missing or malformed provenance remains `UNKNOWN`. No experiment, verdict, lesson, analytics or Creative Memory engine was added, and no live data, publisher or Generator interface changed.
 
+## POST-10 P8 effective-evidence boundary
+
+`LESSON_EFFECTIVE_WEIGHT_V1` is a deterministic compute-on-read policy over the existing lessons, experiments, analyses and POST-09 mutation proofs. It leaves canonical lesson status, verdicts and timestamps immutable, then derives `VERY_HIGH / HIGH / MEDIUM / LOW / WEAK / CONFLICTED / UNKNOWN` from exact mechanism evidence, lineage-independent roots, 30/90/180-day provisional freshness buckets, context match and typed direct/contextual/platform contradictions. TikTok-only evidence never promotes a YouTube lesson, and cross-platform scope requires separately valid proofs on both platforms.
+
+The existing TikTok and YouTube feedback contexts rank current guidance by this effective state and preserve the full state plus policy version/evaluation time in their existing immutable hypothesis snapshot. Stale or conflicted historically strong evidence may yield an owner-gated `CONTROLLED_RETEST`; it never launches an experiment or production. `OWNER_PREFERENCE` does not auto-decay, `MARKET_REFERENCE` is untouched, and no lesson/experiment/Creative Memory store was added. A narrow migration only versions the accepted market-feedback persistence wrapper; its predecessor is no longer callable by the service role, replay compares the complete contract, and derived snapshots use exact fail-closed schemas.
+
 ## Do not build
 
 - no Creative Memory database;
@@ -67,4 +73,4 @@ Existing TikTok and YouTube experiments may attach one immutable platform proof 
 - no metric copying into identity rows;
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
-POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md`; POST-09 lineage evidence is in `POST_09_CREATIVE_MUTATION_LINEAGE.md` in Text Factory.
+POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md`; POST-09 lineage evidence is in `POST_09_CREATIVE_MUTATION_LINEAGE.md`; POST-10 effective-evidence policy is in `POST_10_LESSON_FRESHNESS_DECAY.md` in Text Factory.

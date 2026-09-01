@@ -28,9 +28,9 @@ import {
 import {
   buildTikTokMarketIdeaContext,
   formatTikTokMarketIdeaPromptContext,
-  marketFeedbackBatchKey,
   validateTikTokMarketCandidates,
 } from "../_shared/tiktok-market-idea.mjs";
+import { resolveStoredLessonDecision } from "../_shared/lesson-effective-weight.mjs";
 import {
   annotateYoutubeCandidates,
   buildYoutubeFeedbackContext,
@@ -218,21 +218,17 @@ async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
     .eq("category", "FAILED_PATTERN").eq("status", "REJECTED").range(from, to));
   const lessons = [...positiveLessons, ...avoidedLessons];
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const citedExperimentIds = [...new Set(lessons.flatMap((lesson) =>
-    (Array.isArray(lesson.evidence) ? lesson.evidence : [])
-      .map((item) => item?.experiment_id).filter((id) => typeof id === "string" && uuid.test(id))))];
-  const citedExperiments = await inChunks(citedExperimentIds, async (ids, from, to) => await admin
-    .from("experiments").select("*").eq("user_id", userId).in("id", ids).range(from, to));
-  const { data: recentExperiments, error: recentError } = await admin.from("experiments")
-    .select("*").eq("user_id", userId).in("result", ["PASS", "FAIL"])
-    .order("updated_at", { ascending: false }).order("id").limit(10);
-  if (recentError) throw recentError;
-  const experimentsById = new Map([...citedExperiments, ...(recentExperiments ?? [])]
-    .map((row) => [row.id, row]));
-  const experiments = [...experimentsById.values()];
-  const analyses = await inChunks(citedExperimentIds, async (ids, from, to) => await admin
+  const experiments = await collectPages(async (from, to) => await admin
+    .from("experiments").select("*").eq("user_id", userId)
+    .order("created_at").order("id").range(from, to));
+  const experimentIds = experiments.map((row) => row.id);
+  const analyses = await inChunks(experimentIds, async (ids, from, to) => await admin
     .from("content_analysis_results").select("*").eq("user_id", userId)
     .in("experiment_id", ids).order("created_at", { ascending: false }).range(from, to));
+  const mutations = await collectPages(async (from, to) => await admin
+    .from("creative_mutations")
+    .select("id,parent_creative_id,child_creative_id,changed_variable,mutation_kind,source_hypothesis_id,prior_evidence_experiment_id")
+    .eq("user_id", userId).order("created_at").order("id").range(from, to));
   const hypotheses = await collectPages(async (from, to) => await admin
     .from("content_hypotheses").select("*").eq("user_id", userId)
     .eq("status", "REJECTED").order("updated_at", { ascending: false }).range(from, to));
@@ -267,7 +263,7 @@ async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
     .from("studio_metrics").select("*").eq("user_id", userId)
     .in("video_id", ids).range(from, to));
   return {
-    lessons, experiments, analyses, hypotheses, framework: framework ?? null,
+    lessons, experiments, analyses, mutations, hypotheses, framework: framework ?? null,
     ideas: [...ideasById.values()], snapshots, studio_metrics: studio,
   };
 }
@@ -337,26 +333,14 @@ async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) 
     .eq("user_id", userId).eq("source_platform", "youtube_shorts").range(from, to));
   const bindings = await collectPages((from, to) => admin.from("content_lesson_youtube_publications")
     .select("*").eq("user_id", userId).range(from, to));
-  const citedIds = [...new Set([
-    ...lessons.flatMap((lesson) => (Array.isArray(lesson.evidence) ? lesson.evidence : [])
-      .map((entry) => entry?.experiment_id)),
-    ...bindings.map((row) => row.experiment_id),
-  ].filter((value) => typeof value === "string"))];
-  const citedExperiments = await inChunks(citedIds, (chunk, from, to) => admin.from("experiments")
-    .select("*").eq("user_id", userId).eq("platform", "youtube_shorts")
-    .in("id", chunk).range(from, to));
-  const { data: recentExperiments, error: recentError } = await admin.from("experiments").select("*")
-    .eq("user_id", userId).eq("platform", "youtube_shorts")
-    .order("updated_at", { ascending: false }).order("id").limit(10);
-  if (recentError) throw recentError;
-  const experiments = [...new Map([...citedExperiments, ...(recentExperiments ?? [])]
-    .map((row) => [row.id, row])).values()];
+  const experiments = await collectPages((from, to) => admin.from("experiments")
+    .select("*").eq("user_id", userId).order("created_at").order("id").range(from, to));
   const experimentIds = experiments.map((row) => row.id);
   const analyses = await inChunks(experimentIds, (chunk, from, to) => admin
     .from("content_analysis_results").select("*").eq("user_id", userId)
-    .eq("platform", "youtube_shorts").in("experiment_id", chunk)
+    .in("experiment_id", chunk)
     .order("created_at", { ascending: false }).range(from, to));
-  const publicationIds = [...new Set(experiments.flatMap((row) =>
+  const publicationIds = [...new Set(experiments.filter((row) => row.platform === "youtube_shorts").flatMap((row) =>
     [row.control_youtube_short_id, row.variant_youtube_short_id]).filter(Boolean))];
   const publications = await inChunks(publicationIds, (chunk, from, to) => admin
     .from("published_shorts").select("*").eq("user_id", userId).in("id", chunk).range(from, to));
@@ -367,6 +351,9 @@ async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) 
     .from("creative_identity_map").select("id,creative_id,video_idea_id,youtube_short_row_id")
     .eq("user_id", userId).eq("platform", "youtube_shorts")
     .in("youtube_short_row_id", chunk).range(from, to));
+  const mutations = await collectPages((from, to) => admin.from("creative_mutations")
+    .select("id,parent_creative_id,child_creative_id,changed_variable,mutation_kind,source_hypothesis_id,prior_evidence_experiment_id")
+    .eq("user_id", userId).order("created_at").order("id").range(from, to));
   const [framework, approved, rejected, hypotheses] = await Promise.all([
     admin.from("prompt_framework_versions").select("*,prompt_framework_rules(*)")
       .eq("user_id", userId).eq("is_current", true).maybeSingle(),
@@ -385,10 +372,32 @@ async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) 
   ]);
   for (const result of [framework, approved, rejected, hypotheses]) if (result.error) throw result.error;
   return {
-    lessons, experiments, analyses, lesson_bindings: bindings,
+    lessons, experiments, analyses, mutations, lesson_bindings: bindings,
     publications, snapshots, mappings, hypotheses: hypotheses.data ?? [],
     framework: framework.data ?? null,
     owner_ideas: [...(approved.data ?? []), ...(rejected.data ?? [])],
+  };
+}
+
+async function loadStoredDecision(admin: SupabaseClient, userId: string, platform: string, batchKey: string) {
+  const batchField = platform === TARGET_PLATFORMS.TIKTOK
+    ? "feedback_batch_key" : "youtube_feedback_batch_key";
+  const { data: ideas, error: ideasError } = await admin.from("video_ideas")
+    .select("id,target_platform,hypothesis_id,evidence_mode,feedback_batch_key,youtube_feedback_batch_key,feedback_context_hash,youtube_feedback_context_hash,selected_lesson_ids,avoided_lesson_ids")
+    .eq("user_id", userId).eq(batchField, batchKey).order("id");
+  if (ideasError) throw ideasError;
+  if (!ideas?.length) return null;
+  const hypothesisIds = [...new Set(ideas.map((row) => row.hypothesis_id).filter(Boolean))];
+  let hypotheses: Array<Record<string, any>> = [];
+  if (hypothesisIds.length) {
+    const { data, error } = await admin.from("content_hypotheses")
+      .select("id,feedback_context").eq("user_id", userId).in("id", hypothesisIds);
+    if (error) throw error;
+    hypotheses = data ?? [];
+  }
+  return {
+    ideas,
+    snapshot: resolveStoredLessonDecision({ ideas, hypotheses, platform, batch_key: batchKey }),
   };
 }
 
@@ -419,7 +428,6 @@ Deno.serve(async (req) => {
   const requestId = typeof body.request_id === "string"
     ? body.request_id
     : `scheduled:${new Date().toISOString().slice(0, 10)}`;
-
   // POST-04: learning memory and idea generation must resolve the same configured owner.
   const ownerId = await configuredOwner(admin);
   if (!ownerId) return json(500, { error: "owner_not_configured" });
@@ -432,12 +440,6 @@ Deno.serve(async (req) => {
     return json(400, { error: "В настройках не указан Telegram ID и бот-отправитель" });
   }
 
-  const { data: bot } = await admin
-    .from("bots").select("token_secret_id").eq("id", profile.error_notify_bot_id).maybeSingle();
-  const { data: token } = await admin
-    .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
-  if (!token) return json(400, { error: "Не удалось получить токен бота" });
-
   const targetPlatform = normalizeTargetPlatform(profile.target_platform);
   let feedbackContext: Awaited<ReturnType<typeof buildTikTokFeedbackContext>> | null = null;
   let marketIdeaContext: Awaited<ReturnType<typeof buildTikTokMarketIdeaContext>> | null = null;
@@ -445,60 +447,41 @@ Deno.serve(async (req) => {
   let youtubeFeedbackContext: Awaited<ReturnType<typeof buildYoutubeFeedbackContext>> | null = null;
   let youtubeBatchKeyValue: string | null = null;
   if (targetPlatform === TARGET_PLATFORMS.TIKTOK) {
-    const feedbackInputs = await loadTikTokFeedbackInputs(admin, profile.id);
-    feedbackContext = await buildTikTokFeedbackContext({
-      ...feedbackInputs,
-      topic: typeof body.topic === "string" ? body.topic.trim() : null,
-    });
     batchKey = await feedbackBatchKey(profile.id, requestId);
-    const marketInputs = await loadTikTokMarketInputs(admin, profile.id);
-    marketIdeaContext = await buildTikTokMarketIdeaContext(feedbackContext, marketInputs);
-    if (marketIdeaContext.active) {
-      batchKey = await marketFeedbackBatchKey(batchKey, marketIdeaContext.context_hash);
-    }
     if (!previewOnly) {
-      const { data: replay, error: replayError } = await admin.from("video_ideas")
-        .select("id,animal,hook,line,target_platform,trend_signal,feedback_candidate_index,market_context_hash")
-        .eq("user_id", profile.id).eq("feedback_batch_key", batchKey)
-        .order("feedback_candidate_index");
-      if (replayError) throw replayError;
-      if (replay?.length && !marketIdeaContext.active) {
-        return json(200, {
-          ok: true, replayed: true, created: 0, existing: replay.length,
-          feedback_outcome: feedbackContext.outcome,
-        });
-      }
-      if (replay?.length && marketIdeaContext.active) {
-        const { data: verified, error: verifyError } = await admin.rpc("persist_tiktok_market_feedback_batch", {
-          p_user_id: profile.id, p_batch_key: batchKey,
-          p_context_hash: marketIdeaContext.context_hash, p_hypothesis_key: marketIdeaContext.hypothesis_key,
-          p_hypothesis: null, p_selected_lesson_ids: null, p_avoided_lesson_ids: null,
-          p_api_metric_snapshot_ids: null, p_studio_metric_ids: null,
-          p_prompt_framework_id: null, p_prompt_framework_version: null,
-          p_market_context: null, p_candidates: null,
-        });
-        if (verifyError) throw verifyError;
-        return json(200, {
-          ok: true, replayed: true, created: 0,
-          existing: Array.isArray(verified) ? verified.length : replay.length,
-          feedback_outcome: marketIdeaContext.outcome,
-        });
-      }
+      const replay = await loadStoredDecision(admin, profile.id, targetPlatform, batchKey);
+      if (replay) return json(200, {
+        ok: true, replayed: true, created: 0, existing: replay.ideas.length,
+        feedback_outcome: "REPLAY", stored_decision: replay.snapshot,
+      });
     }
   } else if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
     youtubeBatchKeyValue = await youtubeFeedbackBatchKey(profile.id, requestId);
     if (!previewOnly) {
-      const { data: replay, error: replayError } = await admin.from("video_ideas")
-        .select("id,animal,hook,line,target_platform,trend_signal,youtube_candidate_index")
-        .eq("user_id", profile.id).eq("youtube_feedback_batch_key", youtubeBatchKeyValue)
-        .order("youtube_candidate_index");
-      if (replayError) throw replayError;
-      if (replay?.length) return json(200, {
-        ok: true, replayed: true, created: 0, existing: replay.length,
-        feedback_outcome: "REPLAY",
+      const replay = await loadStoredDecision(admin, profile.id, targetPlatform, youtubeBatchKeyValue);
+      if (replay) return json(200, {
+        ok: true, replayed: true, created: 0, existing: replay.ideas.length,
+        feedback_outcome: "REPLAY", stored_decision: replay.snapshot,
       });
     }
   }
+  const evaluationAt = new Date().toISOString();
+  if (targetPlatform === TARGET_PLATFORMS.TIKTOK) {
+    const feedbackInputs = await loadTikTokFeedbackInputs(admin, profile.id);
+    feedbackContext = await buildTikTokFeedbackContext({
+      ...feedbackInputs,
+      topic: typeof body.topic === "string" ? body.topic.trim() : null,
+      evaluation_at: evaluationAt,
+    });
+    const marketInputs = await loadTikTokMarketInputs(admin, profile.id);
+    marketIdeaContext = await buildTikTokMarketIdeaContext(feedbackContext, marketInputs);
+  }
+
+  const { data: bot } = await admin
+    .from("bots").select("token_secret_id").eq("id", profile.error_notify_bot_id).maybeSingle();
+  const { data: token } = await admin
+    .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
+  if (!token) return json(400, { error: "Не удалось получить токен бота" });
 
   // Чтобы звери не повторялись — показываем модели, кто уже был
   const { data: былые } = await admin
@@ -516,7 +499,7 @@ Deno.serve(async (req) => {
       experimentSet = selectYoutubeExperimentSet(candidates, count);
       const youtubeInputs = await loadYoutubeFeedbackInputs(admin, profile.id);
       youtubeFeedbackContext = await buildYoutubeFeedbackContext({
-        ...youtubeInputs, market_references: experimentSet,
+        ...youtubeInputs, market_references: experimentSet, evaluation_at: evaluationAt,
       });
     }
   } catch (e) {
@@ -669,6 +652,10 @@ Deno.serve(async (req) => {
       platform: "tiktok",
       OWN_PERFORMANCE: {
         source_type: "OWN_PERFORMANCE",
+        lesson_effective_policy_version: feedbackContext.OWN_PERFORMANCE.lesson_effective_policy_version,
+        evaluation_at: feedbackContext.OWN_PERFORMANCE.evaluation_at,
+        lesson_effective_states: feedbackContext.OWN_PERFORMANCE.lesson_effective_states,
+        controlled_retests: feedbackContext.OWN_PERFORMANCE.controlled_retests,
         selected_lessons: feedbackContext.OWN_PERFORMANCE.selected_lessons,
         avoided_lessons: feedbackContext.OWN_PERFORMANCE.avoided_lessons,
         primary: feedbackContext.OWN_PERFORMANCE.primary,
@@ -717,6 +704,10 @@ Deno.serve(async (req) => {
       platform: feedbackContext.platform,
       OWN_PERFORMANCE: {
         source_type: "OWN_PERFORMANCE",
+        lesson_effective_policy_version: feedbackContext.OWN_PERFORMANCE.lesson_effective_policy_version,
+        evaluation_at: feedbackContext.OWN_PERFORMANCE.evaluation_at,
+        lesson_effective_states: feedbackContext.OWN_PERFORMANCE.lesson_effective_states,
+        controlled_retests: feedbackContext.OWN_PERFORMANCE.controlled_retests,
         selected_lessons: feedbackContext.OWN_PERFORMANCE.selected_lessons,
         avoided_lessons: feedbackContext.OWN_PERFORMANCE.avoided_lessons,
         primary: feedbackContext.OWN_PERFORMANCE.primary,

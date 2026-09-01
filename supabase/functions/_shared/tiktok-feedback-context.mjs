@@ -1,4 +1,10 @@
-export const FEEDBACK_CONTEXT_VERSION = 1;
+import {
+  LESSON_EFFECTIVE_POLICY_VERSION,
+  compareLessonEffectiveStates,
+  evaluateLessonsForFeedback,
+} from "./lesson-effective-weight.mjs";
+
+export const FEEDBACK_CONTEXT_VERSION = 2;
 export const MATERIAL_FIELDS = Object.freeze([
   "topic",
   "content_format",
@@ -12,7 +18,6 @@ export const MATERIAL_FIELDS = Object.freeze([
   "prompt_framework_version",
 ]);
 
-const STATUS_PRIORITY = Object.freeze({ CONFIRMED: 2, SUPPORTED: 1 });
 const CONFIDENCE_PRIORITY = Object.freeze({ HIGH: 3, MEDIUM: 2, LOW: 1 });
 const FRAMEWORK_PRIORITY = Object.freeze({ STANDARD: 2, SUPPORTED: 1 });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -60,23 +65,6 @@ function sortedDistinctIds(values) {
   return [...new Set(values.filter((value) => typeof value === "string" && UUID.test(value)))].sort();
 }
 
-function evidenceExperimentIds(lesson) {
-  return sortedDistinctIds((Array.isArray(lesson?.evidence) ? lesson.evidence : [])
-    .map((item) => object(item) ? item.experiment_id : null));
-}
-
-function latestAnalyses(rows) {
-  const ordered = [...rows].sort((left, right) =>
-    timestamp(right.created_at) - timestamp(left.created_at) || String(left.id).localeCompare(String(right.id)));
-  const result = new Map();
-  for (const row of ordered) {
-    if (UUID.test(String(row.experiment_id ?? "")) && !result.has(row.experiment_id)) {
-      result.set(row.experiment_id, row);
-    }
-  }
-  return result;
-}
-
 function topicEligible(lesson, requestedTopic) {
   const topics = Array.isArray(lesson.applicable_topics)
     ? lesson.applicable_topics.map(normalizeIdeaText).filter(Boolean)
@@ -86,43 +74,19 @@ function topicEligible(lesson, requestedTopic) {
   return topics.length === 0 || topics.includes(wanted);
 }
 
-function lessonOrdering(left, right, avoidance = false) {
-  if (!avoidance) {
-    const byStatus = (STATUS_PRIORITY[right.status] ?? 0) - (STATUS_PRIORITY[left.status] ?? 0);
-    if (byStatus) return byStatus;
-  }
-  const byConfidence = (CONFIDENCE_PRIORITY[right.confidence] ?? 0) -
-    (CONFIDENCE_PRIORITY[left.confidence] ?? 0);
-  if (byConfidence) return byConfidence;
-  const byUpdated = timestamp(right.updated_at ?? right.created_at) -
-    timestamp(left.updated_at ?? left.created_at);
-  return byUpdated || String(left.id).localeCompare(String(right.id));
-}
-
-function classifyLessons(lessons, latestByExperiment, requestedTopic) {
-  const positive = [];
-  const avoidance = [];
-  for (const lesson of lessons) {
-    if (!topicEligible(lesson, requestedTopic)) continue;
-    const experimentIds = evidenceExperimentIds(lesson);
-    const conclusions = experimentIds.map((id) => latestByExperiment.get(id)?.conclusion ?? "UNKNOWN");
-    const passCount = conclusions.filter((value) => value === "PASS").length;
-    const failCount = conclusions.filter((value) => value === "FAIL").length;
-    const positiveCategory = ["CONFIRMED_LESSON", "WINNING_PATTERN"].includes(lesson.category);
-    const positiveStatus = ["CONFIRMED", "SUPPORTED"].includes(lesson.status);
-    const requiredPasses = lesson.status === "CONFIRMED" ? 3 : 2;
-    if (positiveCategory && positiveStatus && passCount >= requiredPasses && failCount === 0) {
-      positive.push({ ...lesson, experiment_ids: experimentIds });
-      continue;
-    }
-    if (lesson.category === "FAILED_PATTERN" && lesson.status === "REJECTED" &&
-        failCount >= 2 && passCount === 0) {
-      avoidance.push({ ...lesson, experiment_ids: experimentIds });
-    }
-  }
+function classifyLessons(lessons, evaluation, requestedTopic) {
+  const byLesson = new Map(lessons.map((lesson) => [lesson.id, lesson]));
+  const shape = (state) => ({
+    ...byLesson.get(state.lesson_id),
+    experiment_ids: state.supporting_experiment_ids,
+    effective_evidence: state,
+  });
+  const eligible = (state) => topicEligible(byLesson.get(state.lesson_id) ?? {}, requestedTopic);
   return {
-    positive: positive.sort((a, b) => lessonOrdering(a, b)).slice(0, 5),
-    avoidance: avoidance.sort((a, b) => lessonOrdering(a, b, true)).slice(0, 5),
+    positive: evaluation.positive.filter(eligible).sort((left, right) =>
+      compareLessonEffectiveStates(left, right)).slice(0, 5).map(shape),
+    avoidance: evaluation.avoidance.filter(eligible).sort((left, right) =>
+      compareLessonEffectiveStates(left, right)).slice(0, 5).map(shape),
   };
 }
 
@@ -220,14 +184,30 @@ export async function buildTikTokFeedbackContext(input) {
   const experiments = Array.isArray(input.experiments) ? input.experiments : [];
   const analyses = Array.isArray(input.analyses) ? input.analyses : [];
   const hypotheses = Array.isArray(input.hypotheses) ? input.hypotheses : [];
-  const latest = latestAnalyses(analyses);
-  const classified = classifyLessons(lessons, latest, input.topic);
+  const framework = eligibleFramework(input.framework);
+  const currentContext = {
+    ...(object(input.current_context) ? input.current_context : {}),
+    ...(input.topic ? { topic: normalizeIdeaText(input.topic) } : {}),
+    ...(framework?.version_label ? { prompt_framework_version: framework.version_label } : {}),
+  };
+  const effective = evaluateLessonsForFeedback({
+    lessons,
+    experiments,
+    analyses,
+    mutations: Array.isArray(input.mutations) ? input.mutations : [],
+    lesson_bindings: Array.isArray(input.lesson_bindings) ? input.lesson_bindings : [],
+    target_platform: "tiktok",
+    current_context: currentContext,
+    evaluation_at: input.evaluation_at,
+  });
+  const classified = classifyLessons(lessons, effective, input.topic);
   const experimentsById = new Map(experiments.map((row) => [row.id, row]));
+  const analysesById = new Map(analyses.map((row) => [row.id, row]));
   const rejectedSignatures = new Set();
   for (const lesson of classified.avoidance) {
     for (const id of lesson.experiment_ids) {
       const experiment = experimentsById.get(id);
-      if (experiment && latest.get(id)?.conclusion === "FAIL") {
+      if (experiment) {
         rejectedSignatures.add(experimentSignature(experiment));
       }
     }
@@ -239,8 +219,9 @@ export async function buildTikTokFeedbackContext(input) {
 
   let primary = null;
   for (const lesson of classified.positive) {
-    const candidates = lesson.experiment_ids.map((id) => ({
-      experiment: experimentsById.get(id), analysis: latest.get(id), lesson,
+    const candidates = lesson.effective_evidence.supporting_evidence.map((evidence) => ({
+      experiment: experimentsById.get(evidence.experiment_id),
+      analysis: analysesById.get(evidence.analysis_id), lesson,
     })).filter(({ experiment, analysis }) => experiment && analysis?.conclusion === "PASS" &&
       ["ANALYZED", "CLOSED"].includes(experiment.status) &&
       MATERIAL_FIELDS.includes(experiment.changed_variable) && object(experiment.constants) &&
@@ -253,7 +234,6 @@ export async function buildTikTokFeedbackContext(input) {
     }
   }
 
-  const framework = eligibleFramework(input.framework);
   const ownerPreference = selectedOwnerPreferences(Array.isArray(input.ideas) ? input.ideas : []);
   const evidenceVideoIds = sortedDistinctIds([
     ...classified.positive.flatMap((lesson) => Array.isArray(lesson.videos_used) ? lesson.videos_used : []),
@@ -289,25 +269,31 @@ export async function buildTikTokFeedbackContext(input) {
 
   const stableOwnPerformance = {
     source_type: "OWN_PERFORMANCE",
+    lesson_effective_policy_version: LESSON_EFFECTIVE_POLICY_VERSION,
+    evaluation_at: input.evaluation_at,
+    lesson_effective_states: effective.states,
+    controlled_retests: effective.controlled_retests,
     selected_lessons: classified.positive.map((lesson) => ({
       lesson_id: lesson.id, lesson: lesson.lesson, category: lesson.category,
       status: lesson.status, confidence: lesson.confidence,
-      conclusive_evidence: lesson.experiment_ids.map((id) => ({
-        experiment_id: id,
-        experiment_status: experimentsById.get(id)?.status ?? "UNKNOWN",
-        latest_analysis_id: latest.get(id)?.id ?? null,
-        latest_conclusion: latest.get(id)?.conclusion ?? "UNKNOWN",
-      })).filter((item) => item.latest_conclusion === "PASS"),
+      effective_evidence: lesson.effective_evidence,
+      conclusive_evidence: lesson.effective_evidence.supporting_evidence.map((evidence) => ({
+        experiment_id: evidence.experiment_id,
+        experiment_status: experimentsById.get(evidence.experiment_id)?.status ?? "UNKNOWN",
+        latest_analysis_id: evidence.analysis_id,
+        latest_conclusion: evidence.conclusion,
+      })),
     })),
     avoided_lessons: classified.avoidance.map((lesson) => ({
       lesson_id: lesson.id, lesson: lesson.lesson, category: lesson.category,
       status: lesson.status, confidence: lesson.confidence,
-      conclusive_evidence: lesson.experiment_ids.map((id) => ({
-        experiment_id: id,
-        experiment_status: experimentsById.get(id)?.status ?? "UNKNOWN",
-        latest_analysis_id: latest.get(id)?.id ?? null,
-        latest_conclusion: latest.get(id)?.conclusion ?? "UNKNOWN",
-      })).filter((item) => item.latest_conclusion === "FAIL"),
+      effective_evidence: lesson.effective_evidence,
+      conclusive_evidence: lesson.effective_evidence.supporting_evidence.map((evidence) => ({
+        experiment_id: evidence.experiment_id,
+        experiment_status: experimentsById.get(evidence.experiment_id)?.status ?? "UNKNOWN",
+        latest_analysis_id: evidence.analysis_id,
+        latest_conclusion: evidence.conclusion,
+      })),
     })),
     primary: primary ? {
       lesson_id: primary.lesson.id,
@@ -316,6 +302,7 @@ export async function buildTikTokFeedbackContext(input) {
       changed_variable: primary.experiment.changed_variable,
       constants: primary.experiment.constants,
       success_metrics: primary.experiment.success_metrics,
+      effective_evidence: primary.lesson.effective_evidence,
     } : null,
     prompt_framework: framework ? {
       id: framework.id,
@@ -365,6 +352,7 @@ export async function buildTikTokFeedbackContext(input) {
     OWNER_PREFERENCE: ownerPreference,
     recent_creative_signatures: recentCreativeSignatures,
     limitations: [...new Set(limitations)],
+    controlled_retests: effective.controlled_retests,
     hypothesis_candidate: primary && framework ? {
       statement: `Проверить следующий TikTok-креатив по lesson ${primary.lesson.id}, ` +
         `изменяя только ${primary.experiment.changed_variable}.`,
@@ -379,6 +367,8 @@ export async function buildTikTokFeedbackContext(input) {
         avoided_lesson_ids: classified.avoidance.map((lesson) => lesson.id),
         experiment_id: primary.experiment.id,
         analysis_id: primary.analysis.id,
+        policy_version: LESSON_EFFECTIVE_POLICY_VERSION,
+        effective_state: primary.lesson.effective_evidence,
       }],
     } : null,
   };

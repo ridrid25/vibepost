@@ -81,20 +81,15 @@ async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
     .eq("user_id", userId).eq("category", "FAILED_PATTERN").eq("status", "REJECTED")
     .range(from, to));
   const lessons = [...positiveLessons, ...avoidedLessons];
-  const citedExperimentIds = [...new Set(lessons.flatMap((lesson) =>
-    (Array.isArray(lesson.evidence) ? lesson.evidence : []).map((item: any) => item?.experiment_id)
-      .filter((id: unknown) => typeof id === "string" && UUID.test(id))))] as string[];
-  const citedExperiments = await inChunks(citedExperimentIds, (ids, from, to) => admin
-    .from("experiments").select("*").eq("user_id", userId).in("id", ids).range(from, to));
-  const { data: recentExperiments, error: recentError } = await admin.from("experiments")
-    .select("*").eq("user_id", userId).in("result", ["PASS", "FAIL"])
-    .order("updated_at", { ascending: false }).order("id").limit(10);
-  if (recentError) throw new Error("feedback_read_failed");
-  const experiments = [...new Map([...citedExperiments, ...(recentExperiments ?? [])]
-    .map((row) => [row.id, row])).values()];
-  const analyses = await inChunks(citedExperimentIds, (ids, from, to) => admin
+  const experiments = await collectPages((from, to) => admin.from("experiments")
+    .select("*").eq("user_id", userId).order("created_at").order("id").range(from, to));
+  const experimentIds = experiments.map((row) => row.id);
+  const analyses = await inChunks(experimentIds, (ids, from, to) => admin
     .from("content_analysis_results").select("*").eq("user_id", userId)
     .in("experiment_id", ids).order("created_at", { ascending: false }).range(from, to));
+  const mutations = await collectPages((from, to) => admin.from("creative_mutations")
+    .select("id,parent_creative_id,child_creative_id,changed_variable,mutation_kind")
+    .eq("user_id", userId).order("created_at").order("id").range(from, to));
   const hypotheses = await collectPages((from, to) => admin.from("content_hypotheses").select("*")
     .eq("user_id", userId).eq("status", "REJECTED")
     .order("updated_at", { ascending: false }).range(from, to));
@@ -128,7 +123,7 @@ async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
     .order("collected_at", { ascending: false }).range(from, to));
   const studio = await inChunks(evidenceVideoIds, (ids, from, to) => admin
     .from("studio_metrics").select("*").eq("user_id", userId).in("video_id", ids).range(from, to));
-  return { lessons, experiments, analyses, hypotheses, framework: framework ?? null,
+  return { lessons, experiments, analyses, mutations, hypotheses, framework: framework ?? null,
     ideas, snapshots, studio_metrics: studio };
 }
 
@@ -252,6 +247,7 @@ async function preview(admin: SupabaseClient, userId: string, body: Record<strin
   const base = await buildTikTokFeedbackContext({
     ...inputs,
     topic: typeof body.topic === "string" ? body.topic.trim() : null,
+    evaluation_at: new Date().toISOString(),
   });
   return await buildTikTokMarketPreview(base, {
     reference, factEvidence: facts[0], dnaEvidence: dna,
