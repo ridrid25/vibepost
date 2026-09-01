@@ -20,3 +20,8 @@ verify_jwt = true
 
 [functions.content-brigade]
 verify_jwt = false
+
+# Meeting Assistant authenticates with a dedicated >=32-byte directional
+# secret. It intentionally has no Supabase user JWT.
+[functions.validate-telegram-attribution]
+verify_jwt = false
