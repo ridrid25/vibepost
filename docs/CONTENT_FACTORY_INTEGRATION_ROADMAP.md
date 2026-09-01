@@ -18,7 +18,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
 | P8 Lesson Freshness | POST-10 `PASS/ACCEPTED`: derive versioned effective strength from immutable lesson history, lineage-independent support, recency, context and typed contradictions. |
-| P9 Business Attribution | Later link publications to external business events; Meta/Prodamus/CRM are outside POST-03. |
+| P9 Business Attribution | POST-11 discovery complete; implementation not started. VibePost owns exact publication identity and a future narrow opaque-token mapping, while lead/order/payment systems remain canonical event and PII owners. |
 
 ## POST-04 P2 boundary
 
@@ -62,6 +62,12 @@ Existing TikTok and YouTube experiments may attach one immutable platform proof 
 
 The existing TikTok and YouTube feedback contexts rank current guidance by this effective state and preserve the full state plus policy version/evaluation time in their existing immutable hypothesis snapshot. Stale or conflicted historically strong evidence may yield an owner-gated `CONTROLLED_RETEST`; it never launches an experiment or production. `OWNER_PREFERENCE` does not auto-decay, `MARKET_REFERENCE` is untouched, and no lesson/experiment/Creative Memory store was added. A narrow migration only versions the accepted market-feedback persistence wrapper; its predecessor is no longer callable by the service role, replay compares the complete contract, and derived snapshots use exact fail-closed schemas.
 
+## POST-11 P9 discovery boundary
+
+The accepted identity graph is deterministic through TikTok and YouTube publication but currently has no click, lead, order, payment or revenue edge. Telegram posts have stable `posts.id`/`tg_message_id` and URL buttons, but are not mapped to `creative_id` and do not observe URL-button clicks. YouTube can store URL text in a Short description, but YouTube makes those URLs non-clickable; TikTok has no current per-publication conversion hook in VibePost. No CRM, active payment provider, Meta integration or canonical revenue event exists here.
+
+Business source systems remain authoritative. The production Meeting Assistant owns `Booking.id` lead events, but its cleanup removes `BusinessEvent` rows and some non-confirmed booking statuses after 30 days; Hamon Shop owns customer/order IDs but currently uses test/manual payment and therefore supplies no provider-confirmed revenue. VibePost must not copy their PII or become a payment ledger. The recommended future slice is a narrow owner-scoped opaque token mapping from one Telegram publication to a Meeting `BOT_START`, followed by a source-owned, PII-free durable outcome record linked to `Booking.id` where retained. A publication token may bind to many distinct subject events; it is attribution-only, not authorization. Live CTA activation and Meeting Assistant changes require a separate owner-approved contract. POST-11 creates no schema, webhook, tracking link or production integration.
+
 ## Do not build
 
 - no Creative Memory database;
@@ -73,4 +79,4 @@ The existing TikTok and YouTube feedback contexts rank current guidance by this 
 - no metric copying into identity rows;
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
-POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md`; POST-09 lineage evidence is in `POST_09_CREATIVE_MUTATION_LINEAGE.md`; POST-10 effective-evidence policy is in `POST_10_LESSON_FRESHNESS_DECAY.md` in Text Factory.
+POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md`; POST-09 lineage evidence is in `POST_09_CREATIVE_MUTATION_LINEAGE.md`; POST-10 effective-evidence policy is in `POST_10_LESSON_FRESHNESS_DECAY.md`; POST-11 business-attribution discovery is in `POST_11_BUSINESS_ATTRIBUTION_DISCOVERY.md` in Text Factory.
