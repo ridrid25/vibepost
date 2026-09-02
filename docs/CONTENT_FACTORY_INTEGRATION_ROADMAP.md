@@ -2,9 +2,13 @@
 
 Canonical direction: `content-factory-personal/CROSS_REPO_CONTENT_FACTORY_ROADMAP.md` in the Text Factory repository.
 
+Current operational status: `content-factory-personal/CONTENT_FACTORY_CURRENT_STATE.md`. The POST-specific sections below are historical stage boundaries; phrases such as “future” or “not started” describe that stage's acceptance moment, not today's state.
+
+POST-13C is `TERMINAL FAIL`. POST-13D is `ROLLED_BACK` before Telegram delivery. Neither produced `BOT_START`, `CANARY_LEAD_CREATED` or exact live resolution. The unresolved canary blocker is that the VibePost Vault publisher credential does not correspond to `@ContentFactoryLeads_bot`; this reconciliation does not activate, fix or rotate it. Broad rollout remains not approved.
+
 ## VibePost role
 
-VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication identities, both existing metric collectors and the existing learning memory: hypotheses, experiments, analysis results, lessons and prompt frameworks. It does not own Text source revisions or Generator media parameters.
+VibePost owns incoming drafts and publishing; TikTok/YouTube publication identities and metrics; the existing learning memory; market-reference storage; experiment/lesson extensions; and Telegram attribution plumbing. It does not own Text Factory authoring/source revisions, Meeting/customer PII, or Generator prompts, models, production routes and tuned media parameters.
 
 ## Priorities P1–P9
 
@@ -18,7 +22,7 @@ VibePost owns incoming drafts, platform publishing, TikTok/YouTube publication i
 | P6 Owner Preference Memory | Keep owner approvals/rejections/preferences separate from performance evidence. |
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
 | P8 Lesson Freshness | POST-10 `PASS/ACCEPTED`: derive versioned effective strength from immutable lesson history, lineage-independent support, recency, context and typed contradictions. |
-| P9 Business Attribution | POST-12 implementation v1 complete locally/test-first: VibePost owns exact Telegram publication identity and the narrow opaque-token mapping; Meeting Assistant owns BOT_START, Booking and durable pseudonymous lead outcomes. Live CTA activation, payment and revenue remain deferred. |
+| P9 Business Attribution | POST-12 implementation v1 is complete locally/test-first. POST-13C is `TERMINAL FAIL`; POST-13D is `ROLLED_BACK` after the exact-bot gate rejected a Vault credential mismatch before delivery. Live attribution proof, payment and revenue remain absent. |
 
 ## POST-04 P2 boundary
 

@@ -3,6 +3,8 @@
 Восстановлено 29.07.2026 из переписки 19–26 июля (сессия `05097bb6`, 2787 записей).
 Документ отвечает на три вопроса: **что сделано**, **где остановились**, **что дальше**.
 
+> CONTENT FACTORY RECONCILIATION — 2026-09-02: VibePost remains the owner of publishing, TikTok/YouTube metrics, existing learning memory, market-reference and experiment/lesson extensions, and attribution plumbing. POST-13C is `TERMINAL FAIL`; POST-13D is `ROLLED_BACK`. No successful live Content Factory lead attribution exists. Current blocker: the Vault publisher credential does not correspond to `@ContentFactoryLeads_bot`. See `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md`. The dated production journal below remains historical evidence and was not rewritten.
+
 ---
 
 ## 1. Что сделано

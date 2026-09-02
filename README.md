@@ -9,7 +9,7 @@
 | `docs/02_PLAN.md` | Этапы 0–6 с чекапами и правилами согласования |
 | `docs/03_LOVABLE.md` | Готовые промпты для Lovable (фронтенд) |
 | `docs/04_SETUP.md` | Чеклист подготовки (сделать ДО старта) |
-| `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md` | Роль VibePost и P1–P9 в общей Content Factory |
+| `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md` | Текущая роль VibePost, принятые POST-границы и terminal canary status |
 | `.env.example` | Образец файла с секретами |
 | `env-generator.html` | Страница для заполнения `.env` через браузер (открыть в Chrome) |
 | `.gitignore` | Защита: не даёт закоммитить `.env` с секретами в git |
