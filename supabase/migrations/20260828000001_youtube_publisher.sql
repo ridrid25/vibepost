@@ -275,3 +275,8 @@ alter table public.incoming_videos
   add column if not exists description_options jsonb,
   add column if not exists post_description text;
 grant update (post_description) on public.incoming_videos to authenticated;
+
+-- 02.09: сырой файл и вожжённый заголовок — для перевески титров после переименования.
+alter table public.incoming_videos
+  add column if not exists raw_video_url text,
+  add column if not exists burned_hook text;

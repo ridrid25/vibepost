@@ -1219,12 +1219,14 @@ async function присланныеБоту() {
       });
       if (!up.ok) throw new Error(`хранилище: ${up.status}`);
 
+      // ?v= — чтобы телефон не показал старые титры из кэша после перевески.
       await fetch(`${url}/rest/v1/incoming_videos?id=eq.${ролик.id}`, {
         method: 'PATCH',
         headers: { ...h, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          video_url: `${url}/storage/v1/object/public/post-photos/${путь}`,
+          video_url: `${url}/storage/v1/object/public/post-photos/${путь}?v=${Date.now()}`,
           polished_at: new Date().toISOString(),
+          burned_hook: заголовок,
         }),
       });
       console.log('готово, во «Входящих» уже с титрами.');
@@ -1260,6 +1262,39 @@ async function присланныеБоту() {
  */
 const ПРЕДЕЛ_ТИКА_МС = 3 * 60 * 1000;
 
+/**
+ * Переименовала карточку после титров — заголовок в кадре должен смениться.
+ * Раньше переименование меняло только hook в базе: 01.09 заказчица трижды
+ * писала «поменяй название», а в кадре стояло старое. Сравниваем нужный
+ * заголовок с вожжённым (burned_hook); разошлись — возвращаем сырой файл
+ * (raw_video_url) и снимаем polished_at, дальше обычный проход навесит титры.
+ */
+async function перевеситьТитры() {
+  if (!url || !serviceKey) return;
+  const h = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` };
+  let строки;
+  try {
+    строки = await (await fetch(
+      `${url}/rest/v1/incoming_videos?polished_at=not.is.null&raw_video_url=not.is.null` +
+      `&burned_hook=not.is.null&status=in.(new,scheduled)` +
+      `&select=id,name,hook,burned_hook,raw_video_url&limit=20`,
+      { headers: h },
+    )).json();
+  } catch { return; }
+  if (!Array.isArray(строки)) return;
+  const норм = (s) => (s ?? '').trim().replace(/\s+/g, ' ').toUpperCase();
+  for (const р of строки) {
+    const нужен = (р.hook ?? '').trim() || заголовокИз(р.name);
+    if (!нужен || норм(нужен) === норм(р.burned_hook)) continue;
+    console.log(`[перевеска] «${р.name}»: в кадре «${р.burned_hook}», нужно «${нужен}»`);
+    await fetch(`${url}/rest/v1/incoming_videos?id=eq.${р.id}`, {
+      method: 'PATCH',
+      headers: { ...h, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ video_url: р.raw_video_url, polished_at: null }),
+    }).catch(() => {});
+  }
+}
+
 let занят = false;
 let началТик = 0;
 
@@ -1284,6 +1319,7 @@ async function tick() {
     await просмотр(readyDir, false);
     await просмотр(dubDir, true);
     await просмотр(noSubsDir, false);
+    await перевеситьТитры();
     await присланныеБоту();
   } finally {
     занят = false;

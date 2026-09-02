@@ -297,23 +297,54 @@ Deno.serve(async (req) => {
       };
     }
 
-    const { data: row } = await admin.from("incoming_videos").insert({
-      user_id: profile.id,
-      idea_id: idea?.id ?? null,
-      name: name.slice(0, 200),
-      prompt: idea?.prompt ?? null,
-      source: `${platformLabel(targetPlatform)} · прислано боту`,
-      target_platform: targetPlatform,
-      causal_pattern: causalPattern,
-      causal_pattern_review: разбор.causal_pattern_preserved,
-      video_url: videoUrl,
-      status: "new",
-      review: разбор.review,
-      tag: разбор.tag?.slice(0, 40) || null,
-      hook_options: (разбор.hooks ?? []).slice(0, 5).map((h) => h.slice(0, 60)),
-      caption_options: [],
-      ready: false,
-    }).select("id").single();
+    // Одна идея — одна карточка. Переделка того же ролика заменяет видео в
+    // открытой карточке, а не рождает новую: 01.09 фламинго приехал пятью
+    // карточками подряд, заказчица скрывала их одну за другой и потеряла
+    // своё название и описание.
+    let открытая: { id: string; name: string | null } | null = null;
+    if (idea?.id) {
+      const { data } = await admin.from("incoming_videos")
+        .select("id,name").eq("idea_id", idea.id).in("status", ["new", "rework"])
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      открытая = data;
+    }
+    if (открытая) {
+      await admin.from("incoming_videos").update({
+        video_url: videoUrl,
+        raw_video_url: videoUrl,
+        polished_at: null,
+        status: "new",
+        rework_at: null,
+        measure_avg: null, measure_worst: null, measure_cuts: null,
+        review: разбор.review,
+        tag: разбор.tag?.slice(0, 40) || null,
+        causal_pattern_review: разбор.causal_pattern_preserved,
+        last_activity_at: new Date().toISOString(),
+      }).eq("id", открытая.id);
+      await ответить(
+        `Переделка принята: «${открытая.name ?? name}». Ролик в карточке заменён, ` +
+        `название и описание сохранены, титры перевешу.`,
+      );
+    } else {
+      await admin.from("incoming_videos").insert({
+        user_id: profile.id,
+        idea_id: idea?.id ?? null,
+        name: name.slice(0, 200),
+        prompt: idea?.prompt ?? null,
+        source: `${platformLabel(targetPlatform)} · прислано боту`,
+        target_platform: targetPlatform,
+        causal_pattern: causalPattern,
+        causal_pattern_review: разбор.causal_pattern_preserved,
+        video_url: videoUrl,
+        raw_video_url: videoUrl,
+        status: "new",
+        review: разбор.review,
+        tag: разбор.tag?.slice(0, 40) || null,
+        hook_options: (разбор.hooks ?? []).slice(0, 5).map((h) => h.slice(0, 60)),
+        caption_options: [],
+        ready: false,
+      });
+    }
 
     // Разбор отдельным сообщением: формат проверяем по данным Telegram
     // Реплику выносим отдельной строкой: по ней сразу видно, проглотил ли
