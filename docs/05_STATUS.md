@@ -7,6 +7,8 @@
 
 > META-FIRST — 2026-09-02: `PASS/ACCEPTED` for the fixture/local scope after independent Controller re-review 03 (`0` findings). The stage adds a GET-only Meta adapter, exact provider-ID mapping, explicit-UNKNOWN Insights snapshots and Meta-specific evidence→analysis→lesson→next-hypothesis persistence by extending the existing learning memory. Deterministic tests use synthetic fixtures/PGlite only; live Meta gate is disabled, nothing was deployed, provider write operations are `0`, and Generator/Meeting/commercial canary state is unchanged. Evidence: `META_FIRST_CLOSED_CONTENT_LOOP.md` in Text Factory.
 
+> FAST VIDEO REVIEW RESTORE — 2026-09-03: `PASS`. `video-from-bot` v23 sends the owner-facing Gemini review before a separate `waitUntil` causal check. Production evidence: 14,449 ms to Telegram review, then 11,486 ms to persisted causal `YES`; exact-card guard passed and the card count remained one. Storage, base ownership and replacement identity were preserved. This is maintenance, not a new Content Factory stage. Evidence: `docs/FAST_VIDEO_REVIEW_RESTORE_2026-09-03.md`.
+
 ---
 
 ## 1. Что сделано

@@ -1,0 +1,14 @@
+VIBEPOST VIDEO-FROM-BOT V21 ROLLBACK SNAPSHOT
+
+Created before the 2026-09-03 fast-review repair.
+
+Git tag: video-from-bot-v21-backup-20260903
+Git commit: 011b304953354eb65b0275364b3c4c87719aad6f
+Tracked path: supabase/functions/video-from-bot/index.ts
+Git blob: 42dbc505ed1daf125b7e060adeb3185f8d544665
+SHA-256: 4568da388105f5d8d11ee613b7b0714166d118ad631841cd823c3739c5514600
+
+Rollback command:
+git restore --source video-from-bot-v21-backup-20260903 -- supabase/functions/video-from-bot/index.ts
+
+This manifest contains no credentials or application data.

@@ -13,6 +13,16 @@
 // нет. Хук рисует сама видеомодель при генерации.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { normalizeTargetPlatform, platformLabel } from "../_shared/youtube-trend.mjs";
+import {
+  buildCausalReviewPrompt,
+  buildFastReviewPrompt,
+  CAUSAL_REVIEW_SCHEMA,
+  executeCausalEnrichment,
+  FAST_REVIEW_SCHEMA,
+  hasCausalPattern,
+} from "./review-contract.mjs";
+
+declare const EdgeRuntime: { waitUntil(promise: Promise<unknown>): void };
 
 const REGION = "us-central1";
 const MODEL = "gemini-2.5-flash";
@@ -24,6 +34,14 @@ function json(status: number, body: unknown): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function elapsedMs(startedAt: number): number {
+  return Math.round(performance.now() - startedAt);
+}
+
+function logTiming(event: string, fields: Record<string, unknown>): void {
+  console.log(JSON.stringify({ event, ...fields }));
 }
 
 // ── доступ к Google по служебному аккаунту ────────────────────────────────
@@ -91,40 +109,15 @@ async function googleToken(admin: SupabaseClient): Promise<{ token: string; proj
   return { token: tok.access_token, project: sa.project_id };
 }
 
-const СХЕМА_РАЗБОРА = {
-  type: "OBJECT",
-  properties: {
-    review: {
-      type: "STRING",
-      description: "разбор ролика для владелицы, 2-4 коротких пункта через перенос строки, " +
-        "по-русски: что в кадре, есть ли речь и понятна ли она, что смущает",
-    },
-    ok: { type: "BOOLEAN", description: "годится ли ролик в канал без переделки" },
-    speech: {
-      type: "STRING",
-      description: "реплика героя дословно, как слышно, со знаками препинания",
-    },
-    tag: {
-      type: "STRING",
-      description: "одно-два слова по-русски: кто в кадре. Например «скорпион», " +
-        "«скат», «жираф у ящика». Не предложение, без точки",
-    },
-    hooks: {
-      type: "ARRAY",
-      description: "ровно пять вариантов ЗАГОЛОВКА в кадр: по-русски, 2-5 слов, " +
-        "без точки в конце. Это надпись сверху первые три секунды, она должна " +
-        "цеплять и работать вместе с репликой героя, а не пересказывать её. " +
-        "Разные по приёму: реплика героя, цифра, вопрос, обещание, угроза",
-      items: { type: "STRING" },
-    },
-    causal_pattern_preserved: {
-      type: "STRING",
-      enum: ["YES", "NO", "UNCERTAIN"],
-      description: "advisory only: whether the supplied abstract causal pattern is visibly preserved; UNCERTAIN when no trusted pattern is supplied or the video is ambiguous",
-    },
-  },
-  required: ["review", "ok", "speech", "tag", "hooks", "causal_pattern_preserved"],
+type FastReview = {
+  review: string;
+  ok: boolean;
+  speech: string;
+  tag: string;
+  hooks: string[];
 };
+
+type CausalReview = "YES" | "NO" | "UNCERTAIN";
 
 /** Показывает ролик Gemini и просит разбор и дословную реплику. */
 async function разобрать(
@@ -132,15 +125,7 @@ async function разобрать(
   bytes: Uint8Array,
   задумка: string,
   targetPlatform: string,
-  causalPattern: Record<string, unknown> | null,
-): Promise<{
-  review: string;
-  ok: boolean;
-  speech: string;
-  tag: string;
-  hooks: string[];
-  causal_pattern_preserved: "YES" | "NO" | "UNCERTAIN";
-}> {
+): Promise<FastReview> {
   const { token, project } = await googleToken(admin);
   const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
     `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
@@ -153,40 +138,17 @@ async function разобрать(
         parts: [
           { inlineData: { mimeType: "video/mp4", data: toBase64(bytes) } },
           {
-            // Место действия не проверяем: «улица» была случайным словом в
-            // описании серии, и разбор из-за него ругал ролики за пустыню и
-            // морское дно. Интервью может быть где угодно.
-            text: `Целевая площадка: ${platformLabel(targetPlatform)}. Это ролик ` +
-              `о личных финансах. Серия ` +
-              `«интервью со зверем»: микрофон у морды, зверь отвечает на вопрос ` +
-              `про деньги, деадпан, ироничный чёрный юмор. Место действия любое — ` +
-              `его среда обитания или, наоборот, совсем не подходящая ему обстановка. ` +
-              `За место не ругай.\n${задумка}\n\n` +
-              `Посмотри ролик и дай короткий честный разбор: что в кадре, звучит ли ` +
-              `речь и разборчива ли она, вертикальный ли кадр, попал ли в задумку, ` +
-              `что смущает. Хвалить не надо, отмечай только существенное.\n\n` +
-              `Отдельной строкой напиши РЕПЛИКУ дословно, как её слышно, ` +
-              `со знаками препинания — по ней Татьяна проверяет, не проглотил ли ` +
-              `герой окончание.\n\n` +
-              `И дай МЕТКУ: одно-два слова, кто в кадре. По ней Татьяна узнаёт ` +
-              `ролик в переписке, пока у него нет названия.
-
-` +
-              `И придумай ПЯТЬ ЗАГОЛОВКОВ в кадр — надпись сверху первые три ` +
-              `секунды. Придумывать их должен Claude, а не Татьяна: она только ` +
-              `выбирает. Коротко, 2-5 слов, по-русски, без точки.\n\n` +
-              (causalPattern
-                ? `TRUSTED ABSTRACT CAUSAL PATTERN: ${JSON.stringify(causalPattern)}. ` +
-                  `Отдельно верни causal_pattern_preserved = YES, NO или UNCERTAIN. ` +
-                  `Это advisory signal: не принимай решение за владельца.`
-                : `Trusted causal pattern не задан: верни causal_pattern_preserved=UNCERTAIN.`),
+            text: buildFastReviewPrompt({
+              targetPlatformLabel: platformLabel(targetPlatform),
+              ideaContext: задумка,
+            }),
           },
         ],
       }],
       generationConfig: {
-        temperature: 1.0,
+        temperature: 0.5,
         responseMimeType: "application/json",
-        responseSchema: СХЕМА_РАЗБОРА,
+        responseSchema: FAST_REVIEW_SCHEMA,
       },
     }),
   });
@@ -195,7 +157,46 @@ async function разобрать(
   return JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}");
 }
 
+/** Проверяет только causal pattern; полный owner-review повторно не делает. */
+async function проверитьCausalPattern(
+  admin: SupabaseClient,
+  bytes: Uint8Array,
+  targetPlatform: string,
+  causalPattern: Record<string, unknown>,
+): Promise<unknown> {
+  const { token, project } = await googleToken(admin);
+  const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
+    `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        role: "user",
+        parts: [
+          { inlineData: { mimeType: "video/mp4", data: toBase64(bytes) } },
+          {
+            text: buildCausalReviewPrompt({
+              targetPlatformLabel: platformLabel(targetPlatform),
+              causalPattern,
+            }),
+          },
+        ],
+      }],
+      generationConfig: {
+        temperature: 0.2,
+        responseMimeType: "application/json",
+        responseSchema: CAUSAL_REVIEW_SCHEMA,
+      },
+    }),
+  });
+  if (!res.ok) throw new Error(`causal Gemini HTTP ${res.status}`);
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+}
+
 Deno.serve(async (req) => {
+  const requestStartedAt = performance.now();
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
   const admin = createClient(
@@ -256,8 +257,9 @@ Deno.serve(async (req) => {
       `Реплика: «${idea.line}».`;
   }
   const targetPlatform = normalizeTargetPlatform(idea?.target_platform ?? profile.target_platform);
-  const causalPattern = idea?.causal_pattern && typeof idea.causal_pattern === "object"
-    ? idea.causal_pattern as Record<string, unknown>
+  const rawCausalPattern = idea?.causal_pattern;
+  const causalPattern = hasCausalPattern(rawCausalPattern)
+    ? rawCausalPattern as Record<string, unknown>
     : null;
 
   try {
@@ -279,29 +281,24 @@ Deno.serve(async (req) => {
     if (upErr) throw new Error(upErr.message);
     const videoUrl = admin.storage.from("post-photos").getPublicUrl(key).data.publicUrl;
 
-    let разбор: {
-      review: string;
-      ok: boolean;
-      speech: string;
-      tag: string;
-      hooks: string[];
-      causal_pattern_preserved: "YES" | "NO" | "UNCERTAIN";
-    };
+    let разбор: FastReview;
+    const fastReviewStartedAt = performance.now();
     try {
-      разбор = await разобрать(admin, bytes, задумка, targetPlatform, causalPattern);
+      разбор = await разобрать(admin, bytes, задумка, targetPlatform);
     } catch (e) {
       разбор = {
         review: `Разобрать ролик не вышло: ${e instanceof Error ? e.message : String(e)}`,
-        ok: true,
-        speech: "", tag: "", hooks: [], causal_pattern_preserved: "UNCERTAIN",
+        ok: true, speech: "", tag: "", hooks: [],
       };
     }
+    const fastReviewMs = elapsedMs(fastReviewStartedAt);
 
     // Одна идея — одна карточка. Переделка того же ролика заменяет видео в
     // открытой карточке, а не рождает новую: 01.09 фламинго приехал пятью
     // карточками подряд, заказчица скрывала их одну за другой и потеряла
     // своё название и описание.
     let открытая: { id: string; name: string | null } | null = null;
+    let incomingVideoId: string | null = null;
     if (idea?.id) {
       const { data } = await admin.from("incoming_videos")
         .select("id,name").eq("idea_id", idea.id).in("status", ["new", "rework"])
@@ -309,7 +306,7 @@ Deno.serve(async (req) => {
       открытая = data;
     }
     if (открытая) {
-      await admin.from("incoming_videos").update({
+      const { error: updateError } = await admin.from("incoming_videos").update({
         video_url: videoUrl,
         raw_video_url: videoUrl,
         polished_at: null,
@@ -318,15 +315,16 @@ Deno.serve(async (req) => {
         measure_avg: null, measure_worst: null, measure_cuts: null,
         review: разбор.review,
         tag: разбор.tag?.slice(0, 40) || null,
-        causal_pattern_review: разбор.causal_pattern_preserved,
-        last_activity_at: new Date().toISOString(),
+        causal_pattern_review: causalPattern ? null : "UNCERTAIN",
       }).eq("id", открытая.id);
+      if (updateError) throw new Error(`incoming video update failed: ${updateError.code ?? "unknown"}`);
+      incomingVideoId = открытая.id;
       await ответить(
         `Переделка принята: «${открытая.name ?? name}». Ролик в карточке заменён, ` +
         `название и описание сохранены, титры перевешу.`,
       );
     } else {
-      await admin.from("incoming_videos").insert({
+      const { data: inserted, error: insertError } = await admin.from("incoming_videos").insert({
         user_id: profile.id,
         idea_id: idea?.id ?? null,
         name: name.slice(0, 200),
@@ -334,7 +332,7 @@ Deno.serve(async (req) => {
         source: `${platformLabel(targetPlatform)} · прислано боту`,
         target_platform: targetPlatform,
         causal_pattern: causalPattern,
-        causal_pattern_review: разбор.causal_pattern_preserved,
+        causal_pattern_review: causalPattern ? null : "UNCERTAIN",
         video_url: videoUrl,
         raw_video_url: videoUrl,
         status: "new",
@@ -343,7 +341,11 @@ Deno.serve(async (req) => {
         hook_options: (разбор.hooks ?? []).slice(0, 5).map((h) => h.slice(0, 60)),
         caption_options: [],
         ready: false,
-      });
+      }).select("id").maybeSingle();
+      if (insertError || !inserted?.id) {
+        throw new Error(`incoming video insert failed: ${insertError?.code ?? "missing id"}`);
+      }
+      incomingVideoId = inserted.id;
     }
 
     // Разбор отдельным сообщением: формат проверяем по данным Telegram
@@ -351,14 +353,54 @@ Deno.serve(async (req) => {
     // герой окончание — из-за этого переделывали скорпиона четыре раза.
     let текст = `<b>Разбор ролика</b>\n\n${разбор.review}`;
     if (разбор.speech) текст += `\n\n<b>Слышно так:</b> «${разбор.speech}»`;
-    if (causalPattern) {
-      текст += `\n\n<b>causal_pattern preserved:</b> ${разбор.causal_pattern_preserved}`;
-    }
     if (video.width && video.height && video.width > video.height) {
       текст += `\n\n⚠️ Кадр горизонтальный. В приложении Gemini формат <b>9:16</b> — ` +
         `отдельная настройка, словами в промте она не задаётся.`;
     }
-    await ответить(текст);
+    const telegramStartedAt = performance.now();
+    const ownerResponse = await ответить(текст);
+    const telegramSendMs = elapsedMs(telegramStartedAt);
+    logTiming("video_from_bot_owner_review", {
+      FAST_REVIEW_MS: fastReviewMs,
+      TELEGRAM_SEND_MS: telegramSendMs,
+      PRIMARY_LATENCY_MS: elapsedMs(requestStartedAt),
+      TELEGRAM_OWNER_OK: ownerResponse?.ok === true,
+    });
+
+    if (causalPattern && incomingVideoId) {
+      const causalStartedAt = performance.now();
+      const causalTask = executeCausalEnrichment({
+        analyze: () => проверитьCausalPattern(admin, bytes, targetPlatform, causalPattern),
+        persist: async (value: CausalReview) => {
+          const { data, error } = await admin.from("incoming_videos")
+            .update({ causal_pattern_review: value })
+            .eq("id", incomingVideoId)
+            .eq("video_url", videoUrl)
+            .select("id");
+          if (error) throw new Error("causal review persistence failed");
+          return (data?.length ?? 0) === 1;
+        },
+        onFailure: (error: unknown) => {
+          console.error(JSON.stringify({
+            event: "video_from_bot_causal_failure",
+            error_type: error instanceof Error ? error.name : "UnknownError",
+          }));
+        },
+      }).then((outcome: { outcome: string }) => {
+        logTiming("video_from_bot_causal_complete", {
+          CAUSAL_REVIEW_MS: elapsedMs(causalStartedAt),
+          TOTAL_FUNCTION_MS: elapsedMs(requestStartedAt),
+          CAUSAL_OUTCOME: outcome.outcome,
+        });
+      });
+      EdgeRuntime.waitUntil(causalTask);
+    } else {
+      logTiming("video_from_bot_complete", {
+        CAUSAL_REVIEW_MS: 0,
+        TOTAL_FUNCTION_MS: elapsedMs(requestStartedAt),
+        CAUSAL_OUTCOME: causalPattern ? "SKIPPED_NO_TARGET" : "NOT_REQUIRED",
+      });
+    }
 
     // Просьбы прислать название здесь больше нет. Решение «годится / не
     // годится» Татьяна принимает кнопками под замером — их шлёт приёмник
@@ -371,6 +413,10 @@ Deno.serve(async (req) => {
     // названия» и мешали единственному вопросу: годится ролик или нет.
   } catch (e) {
     await ответить(`Не получилось принять ролик: ${e instanceof Error ? e.message : String(e)}`);
+    logTiming("video_from_bot_failed", {
+      TOTAL_FUNCTION_MS: elapsedMs(requestStartedAt),
+      error_type: e instanceof Error ? e.name : "UnknownError",
+    });
   }
 
   return json(200, { ok: true });

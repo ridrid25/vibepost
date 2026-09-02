@@ -129,8 +129,9 @@ test('final prompt is returned by the existing Telegram command and persisted to
 
 test('returned-video review carries causal advisory without taking owner authority', () => {
   const review = source('supabase/functions/video-from-bot/index.ts');
-  assert.match(review, /causal_pattern_preserved/);
-  assert.match(review, /advisory signal/);
+  const reviewContract = source('supabase/functions/video-from-bot/review-contract.mjs');
+  assert.match(reviewContract, /causal_pattern_preserved/);
+  assert.match(reviewContract, /advisory signal/);
   assert.match(review, /causal_pattern_review/);
 
   const webhook = source('supabase/functions/telegram-webhook/index.ts');
