@@ -9,10 +9,16 @@
 | `docs/02_PLAN.md` | Этапы 0–6 с чекапами и правилами согласования |
 | `docs/03_LOVABLE.md` | Готовые промпты для Lovable (фронтенд) |
 | `docs/04_SETUP.md` | Чеклист подготовки (сделать ДО старта) |
-| `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md` | Текущая роль VibePost, принятые POST-границы и terminal canary status |
+| `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md` | Текущая роль VibePost, Meta-first read-only boundary, принятые POST-границы и terminal canary status |
 | `.env.example` | Образец файла с секретами |
 | `env-generator.html` | Страница для заполнения `.env` через браузер (открыть в Chrome) |
 | `.gitignore` | Защита: не даёт закоммитить `.env` с секретами в git |
+
+## Content Factory integration — current state
+
+VibePost переиспользуется как владелец публикаций, TikTok/YouTube-метрик и существующей Creative Memory. META-FIRST добавляет узкий GET-only Meta adapter, точное `creative_id`→Meta ad сопоставление, нормализованные metric snapshots с явным `UNKNOWN` и Meta-specific evaluation, связанное с существующими analysis/lesson/hypothesis records. Fixture/local proof не означает live-подключение: Meta credential не настроен, live gate выключен, deploy и provider writes не выполнялись.
+
+Авторинг, Research Package и Expert KB принадлежат Text Factory; PII остаётся у source systems; video generation и owner-tuned параметры остаются в защищённом Generator. POST-13C остаётся `TERMINAL FAIL`, POST-13D — `ROLLED_BACK`; commercial canary заморожен.
 
 ## Как запустить работу
 

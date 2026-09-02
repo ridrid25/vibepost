@@ -1,0 +1,86 @@
+{
+  "schema": "meta-first-decision-v1",
+  "batch_hash": "2bbd48f083578680e35eb8e06d513212d1ffa6424272670c71760a8d62bd1107",
+  "experiment_id": "00000000-0000-4000-8000-000000000701",
+  "policy_version": "meta-experiment-v1",
+  "creative_id": "creative-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "identity_map_id": "00000000-0000-4000-8000-000000000102",
+  "exact_meta_mapping": {
+    "provider_account_id": "1000001",
+    "provider_ad_id": "5000002",
+    "provider_creative_id": "4000002",
+    "binding_id": "00000000-0000-4000-8000-000000000402",
+    "snapshot_id": "00000000-0000-4000-8000-000000000502"
+  },
+  "verdict": "PASS",
+  "confidence": "HIGH",
+  "evaluation_reason": "CTR_UP_QUALITY_PRESERVED",
+  "metrics": {
+    "ctr_lift": 0.5,
+    "downstream_quality_ratio": 1.0555555555555556,
+    "conversion": {"state": "UNKNOWN", "value": null},
+    "cpa": {"state": "UNKNOWN", "value": null, "currency": null},
+    "roas": {"state": "UNKNOWN", "value": null, "currency": null}
+  },
+  "lesson": {
+    "lesson_key": "cbcfe2704c7612bc5567cff1474f2cf66252c293323ecdaab1472a7028048989",
+    "statement": "The evidence-led hook improved CTR while downstream quality held; preserve the topic, audience, angle, offer and CTA.",
+    "changed_variable": "hook",
+    "copy_instruction": "Open with measurable proof before the process explanation.",
+    "preserve": ["topic", "audience", "format", "angle", "opening", "cta", "visual", "duration"]
+  },
+  "copy_change_contract": {
+    "source_changed_variable": "hook",
+    "next_changed_variable": "hook",
+    "control_value": "Explain the process first",
+    "variant_value": "46 accepted stages prove the baseline",
+    "instruction": "Open with measurable proof before the process explanation.",
+    "constants_snapshot": {
+      "topic": "evidence-led-content",
+      "audience": "expert-founders",
+      "format": "short-video",
+      "angle": "proof-before-scale",
+      "opening": "Process overview",
+      "cta": "Review the evidence",
+      "visual": "screen-proof",
+      "duration": "45s"
+    }
+  },
+  "next_hypothesis": {
+    "hypothesis_key": "7790f743dbaab2310e03f35a9d593878a7cafe055b32aa84638d3d1146987bcd",
+    "topic_family_key": "evidence-led-content",
+    "topic_action": "CONTINUE",
+    "next_topic_candidate": "evidence-led-content",
+    "audience": "expert-founders",
+    "angle": "proof-before-scale",
+    "changed_variable": "hook",
+    "mutation_kind": "CONTROLLED_MUTATION",
+    "statement": "Reuse the evidence-led topic and angle with the proven hook contract.",
+    "expected_effect": "Preserve downstream quality while applying the stronger opening to the next content family.",
+    "constants_snapshot": {
+      "topic": "evidence-led-content",
+      "audience": "expert-founders",
+      "format": "short-video",
+      "angle": "proof-before-scale",
+      "opening": "Process overview",
+      "cta": "Review the evidence",
+      "visual": "screen-proof",
+      "duration": "45s"
+    }
+  },
+  "why_this_topic_now": [
+    {"root": "META_PERFORMANCE", "availability": "KNOWN", "evidence_refs": ["00000000-0000-4000-8000-000000000701", "00000000-0000-4000-8000-000000000501", "00000000-0000-4000-8000-000000000502"], "contribution": "CTR_UP_QUALITY_PRESERVED", "limitations": []},
+    {"root": "OWN_ORGANIC_PERFORMANCE", "availability": "UNKNOWN", "evidence_refs": [], "contribution": "No comparable organic cohort is available.", "limitations": ["NO_COMPARABLE_COHORT"]},
+    {"root": "MARKET_REFERENCE", "availability": "KNOWN", "evidence_refs": ["market-reference-01"], "contribution": "Market evidence supports demand for auditable content systems.", "limitations": []},
+    {"root": "OWNER_PREFERENCE", "availability": "KNOWN", "evidence_refs": ["owner-preference-01"], "contribution": "Owner prioritizes evidence-first product education.", "limitations": []},
+    {"root": "EXPERT_RESEARCH_EVIDENCE", "availability": "KNOWN", "evidence_refs": ["research-source-01"], "contribution": "Accepted project evidence supports the factual proof angle.", "limitations": []}
+  ],
+  "evidence_summary": [
+    "META_PERFORMANCE:CTR_UP_QUALITY_PRESERVED",
+    "MARKET_REFERENCE:Market evidence supports demand for auditable content systems.",
+    "OWNER_PREFERENCE:Owner prioritizes evidence-first product education.",
+    "EXPERT_RESEARCH_EVIDENCE:Accepted project evidence supports the factual proof angle."
+  ],
+  "unknowns": ["OWN_ORGANIC_PERFORMANCE"],
+  "decision_id": "decision-9a59600057950ca1120be0967e070462ca8eb569169eb4bd0d63b796ec2f098e"
+}

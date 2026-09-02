@@ -1,0 +1,113 @@
+{
+  "schema": "meta-read-bundle-v1",
+  "api_version": "v-fixture",
+  "field_set_version": "meta-readonly-v1",
+  "user_id": "00000000-0000-4000-8000-000000000001",
+  "creative_profiles": [
+    {
+      "id": "00000000-0000-4000-8000-000000000201",
+      "identity_map_id": "00000000-0000-4000-8000-000000000101",
+      "creative_id": "creative-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "product_key": "content-factory",
+      "audience_key": "expert-founders",
+      "topic_key": "evidence-led-content",
+      "format_key": "short-video",
+      "angle_key": "proof-before-scale",
+      "source_kind": "TEXT_HANDOFF",
+      "source_ref": "handoff-control",
+      "source_hash": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000202",
+      "identity_map_id": "00000000-0000-4000-8000-000000000102",
+      "creative_id": "creative-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "product_key": "content-factory",
+      "audience_key": "expert-founders",
+      "topic_key": "evidence-led-content",
+      "format_key": "short-video",
+      "angle_key": "proof-before-scale",
+      "source_kind": "TEXT_HANDOFF",
+      "source_ref": "handoff-variant",
+      "source_hash": "2222222222222222222222222222222222222222222222222222222222222222"
+    }
+  ],
+  "accounts": [
+    {"row_id": "00000000-0000-4000-8000-000000000301", "id": "1000001"}
+  ],
+  "campaigns": [
+    {"row_id": "00000000-0000-4000-8000-000000000302", "id": "2000001", "account_id": "1000001", "objective": "OUTCOME_TRAFFIC"}
+  ],
+  "adsets": [
+    {"row_id": "00000000-0000-4000-8000-000000000303", "id": "3000001", "account_id": "1000001", "campaign_id": "2000001", "optimization_goal": "LANDING_PAGE_VIEWS"}
+  ],
+  "creatives": [
+    {"row_id": "00000000-0000-4000-8000-000000000304", "id": "4000001", "account_id": "1000001"},
+    {"row_id": "00000000-0000-4000-8000-000000000305", "id": "4000002", "account_id": "1000001"}
+  ],
+  "ads": [
+    {"row_id": "00000000-0000-4000-8000-000000000306", "id": "5000001", "account_id": "1000001", "campaign_id": "2000001", "adset_id": "3000001", "creative_id": "4000001"},
+    {"row_id": "00000000-0000-4000-8000-000000000307", "id": "5000002", "account_id": "1000001", "campaign_id": "2000001", "adset_id": "3000001", "creative_id": "4000002"},
+    {"row_id": "00000000-0000-4000-8000-000000000308", "id": "5000003", "account_id": "1000001", "campaign_id": "2000001", "adset_id": "3000001", "creative_id": "4000002"}
+  ],
+  "bindings": [
+    {"id": "00000000-0000-4000-8000-000000000401", "identity_map_id": "00000000-0000-4000-8000-000000000101", "creative_id": "creative-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "account_id": "1000001", "ad_id": "5000001", "provider_creative_id": "4000001", "binding_source": "TEXT_HANDOFF", "bound_at": "2026-08-20T10:00:00Z"},
+    {"id": "00000000-0000-4000-8000-000000000402", "identity_map_id": "00000000-0000-4000-8000-000000000102", "creative_id": "creative-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "account_id": "1000001", "ad_id": "5000002", "provider_creative_id": "4000002", "binding_source": "TEXT_HANDOFF", "bound_at": "2026-08-20T10:00:00Z"},
+    {"id": "00000000-0000-4000-8000-000000000403", "identity_map_id": "00000000-0000-4000-8000-000000000102", "creative_id": "creative-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "account_id": "1000001", "ad_id": "5000003", "provider_creative_id": "4000002", "binding_source": "TEXT_HANDOFF", "bound_at": "2026-08-20T10:00:00Z"}
+  ],
+  "insights": [
+    {
+      "id": "00000000-0000-4000-8000-000000000501",
+      "binding_id": "00000000-0000-4000-8000-000000000401",
+      "account_id": "1000001",
+      "ad_id": "5000001",
+      "date_start": "2026-08-21",
+      "date_stop": "2026-08-27",
+      "collected_at": "2026-08-28T09:00:00Z",
+      "currency": "USD",
+      "attribution_setting": "7d_click_1d_view",
+      "placement_key": "feed",
+      "audience_key": "expert-founders",
+      "optimization_goal": "LANDING_PAGE_VIEWS",
+      "cohort_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "metrics": {"spend": "100.00", "impressions": "10000", "reach": "8000", "frequency": "1.25", "clicks": "200", "ctr": "2.0", "cpc": "0.5", "cpm": "10.0"},
+      "actions": [{"id": "00000000-0000-4000-8000-000000000601", "action_type": "landing_page_view", "value": "120", "currency": null, "authoritative": true}],
+      "limitations": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000502",
+      "binding_id": "00000000-0000-4000-8000-000000000402",
+      "account_id": "1000001",
+      "ad_id": "5000002",
+      "date_start": "2026-08-21",
+      "date_stop": "2026-08-27",
+      "collected_at": "2026-08-28T09:00:00Z",
+      "currency": "USD",
+      "attribution_setting": "7d_click_1d_view",
+      "placement_key": "feed",
+      "audience_key": "expert-founders",
+      "optimization_goal": "LANDING_PAGE_VIEWS",
+      "cohort_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "metrics": {"spend": "100.00", "impressions": "10000", "reach": "8100", "frequency": "1.23", "clicks": "300", "ctr": "3.0", "cpc": "0.333333", "cpm": "10.0"},
+      "actions": [{"id": "00000000-0000-4000-8000-000000000602", "action_type": "landing_page_view", "value": "190", "currency": null, "authoritative": true}],
+      "limitations": []
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000503",
+      "binding_id": "00000000-0000-4000-8000-000000000403",
+      "account_id": "1000001",
+      "ad_id": "5000003",
+      "date_start": "2026-08-21",
+      "date_stop": "2026-08-27",
+      "collected_at": "2026-08-28T09:00:00Z",
+      "currency": "USD",
+      "attribution_setting": "7d_click_1d_view",
+      "placement_key": "feed",
+      "audience_key": "expert-founders",
+      "optimization_goal": "LANDING_PAGE_VIEWS",
+      "cohort_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "metrics": {"spend": null, "impressions": null, "reach": null, "frequency": null, "clicks": null, "ctr": null, "cpc": null, "cpm": null},
+      "actions": [{"id": "00000000-0000-4000-8000-000000000603", "action_type": "landing_page_view", "value": null, "currency": null, "authoritative": true}],
+      "limitations": ["DELIVERY_PENDING"]
+    }
+  ]
+}

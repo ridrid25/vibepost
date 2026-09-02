@@ -5,6 +5,8 @@
 
 > CONTENT FACTORY RECONCILIATION — 2026-09-02: VibePost remains the owner of publishing, TikTok/YouTube metrics, existing learning memory, market-reference and experiment/lesson extensions, and attribution plumbing. POST-13C is `TERMINAL FAIL`; POST-13D is `ROLLED_BACK`. No successful live Content Factory lead attribution exists. Current blocker: the Vault publisher credential does not correspond to `@ContentFactoryLeads_bot`. See `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md`. The dated production journal below remains historical evidence and was not rewritten.
 
+> META-FIRST — 2026-09-02: `PASS/ACCEPTED` for the fixture/local scope after independent Controller re-review 03 (`0` findings). The stage adds a GET-only Meta adapter, exact provider-ID mapping, explicit-UNKNOWN Insights snapshots and Meta-specific evidence→analysis→lesson→next-hypothesis persistence by extending the existing learning memory. Deterministic tests use synthetic fixtures/PGlite only; live Meta gate is disabled, nothing was deployed, provider write operations are `0`, and Generator/Meeting/commercial canary state is unchanged. Evidence: `META_FIRST_CLOSED_CONTENT_LOOP.md` in Text Factory.
+
 ---
 
 ## 1. Что сделано

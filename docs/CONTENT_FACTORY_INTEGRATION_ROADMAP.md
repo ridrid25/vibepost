@@ -6,9 +6,19 @@ Current operational status: `content-factory-personal/CONTENT_FACTORY_CURRENT_ST
 
 POST-13C is `TERMINAL FAIL`. POST-13D is `ROLLED_BACK` before Telegram delivery. Neither produced `BOT_START`, `CANARY_LEAD_CREATED` or exact live resolution. The unresolved canary blocker is that the VibePost Vault publisher credential does not correspond to `@ContentFactoryLeads_bot`; this reconciliation does not activate, fix or rotate it. Broad rollout remains not approved.
 
+META-FIRST is `PASS/ACCEPTED` for the fixture/local scope after independent Controller re-review 03 (`0` findings). VibePost now contains a strict GET-only Meta adapter for campaigns, ad sets, ads, creatives and Insights; provider-specific hierarchy and exact one-to-many `creative_id`→ad bindings; normalized metric snapshots with explicit `UNKNOWN`; Meta-specific experiment evaluation; and append-only links from Meta evidence to the existing analysis, lesson and next-hypothesis records. The deterministic proof uses synthetic fixtures and a local PGlite database only. Live Meta is not connected, the live gate is disabled, no function was deployed and Meta write operations are `0`.
+
 ## VibePost role
 
-VibePost owns incoming drafts and publishing; TikTok/YouTube publication identities and metrics; the existing learning memory; market-reference storage; experiment/lesson extensions; and Telegram attribution plumbing. It does not own Text Factory authoring/source revisions, Meeting/customer PII, or Generator prompts, models, production routes and tuned media parameters.
+VibePost owns incoming drafts and publishing; TikTok/YouTube publication identities and metrics; the read-only Meta provider mapping and normalized metrics boundary; the existing Creative Memory, experiments, analyses and lessons; market-reference storage; and Telegram attribution plumbing. It does not own Text Factory authoring, Research Package or source revisions; Meeting/customer PII; or Generator prompts, models, production routes and tuned media parameters.
+
+## META-FIRST boundary
+
+META-FIRST extends the existing memory instead of creating a Meta dashboard or a second learning database. Five evidence roots remain structurally separate: `META_PERFORMANCE`, `OWN_ORGANIC_PERFORMANCE`, `MARKET_REFERENCE`, `OWNER_PREFERENCE` and `EXPERT_RESEARCH_EVIDENCE`. `WHY_THIS_TOPIC_NOW` retains each root's contribution and unknowns. Paid and organic evidence use different evaluation policies; Meta comparability includes account, date window, currency, attribution setting, placement, audience, optimization goal and cohort. Missing conversions, revenue, CPA or ROAS remain `UNKNOWN` unless the provider supplies authoritative action evidence.
+
+The fixture proof resolves exact provider account/campaign/ad-set/ad/creative IDs without names, timestamps or fuzzy matching. One canonical creative may bind to several Meta ads; one provider ad cannot silently remap to a different creative. A conclusive Meta result writes only through two narrow insert-or-verify RPCs into additive Meta tables and the existing canonical experiment/analysis/lesson/hypothesis records. Exact replay is idempotent and contradictory replay fails closed. No raw provider response, copy, URL, targeting data, customer PII or credential is accepted for storage.
+
+Text Factory owns the immutable Research Package, minimal Expert KB, Builder consumption and five shared derivatives. The approved short-video brief reaches only the existing POST-01 handoff boundary. VibePost does not render video or change Generator settings. Live account validation is a later one-action owner gate and is not required for the accepted fixture proof.
 
 ## Priorities P1–P9
 
@@ -23,6 +33,7 @@ VibePost owns incoming drafts and publishing; TikTok/YouTube publication identit
 | P7 Platform-Aware Evaluation | Cross-cutting prerequisite for P3 verdicts: TikTok and YouTube evaluators return normalized verdict/confidence/provenance; missing metrics remain unavailable. |
 | P8 Lesson Freshness | POST-10 `PASS/ACCEPTED`: derive versioned effective strength from immutable lesson history, lineage-independent support, recency, context and typed contradictions. |
 | P9 Business Attribution | POST-12 implementation v1 is complete locally/test-first. POST-13C is `TERMINAL FAIL`; POST-13D is `ROLLED_BACK` after the exact-bot gate rejected a Vault credential mismatch before delivery. Live attribution proof, payment and revenue remain absent. |
+| P10 Meta-first Closed Loop | Fixture/local proof: GET-only Meta mapping/metrics → platform-specific evaluation → existing lesson/hypothesis → Text Research Package and shared derivatives. Live Meta and production return remain separate gates. |
 
 ## POST-04 P2 boundary
 
@@ -90,3 +101,5 @@ Meeting Assistant recognizes only the bounded `cf1_*` namespace alongside its un
 - no changes to Generator prompts/settings or manual Gemini/Flow.
 
 POST-06 source evidence is coordinated from `POST_06_TIKTOK_MARKET_INTELLIGENCE_DISCOVERY.md`; POST-07 ingest evidence is in `POST_07_TIKTOK_MARKET_REFERENCE_V1.md`; POST-08 idea-integration evidence is in `POST_08_TIKTOK_MARKET_TO_IDEA.md`; POST-09 lineage evidence is in `POST_09_CREATIVE_MUTATION_LINEAGE.md`; POST-10 effective-evidence policy is in `POST_10_LESSON_FRESHNESS_DECAY.md`; POST-11 business-attribution discovery is in `POST_11_BUSINESS_ATTRIBUTION_DISCOVERY.md`; POST-12 Telegram lead-attribution evidence is in `POST_12_TELEGRAM_LEAD_ATTRIBUTION_V1.md` in Text Factory.
+
+META-FIRST evidence and the accepted contract are `META_FIRST_CLOSED_CONTENT_LOOP.md` and `contracts/meta-first-closed-content-loop-v1.md` in Text Factory. The VibePost deterministic suite is `scripts/run-meta-first-closed-loop-suite.mjs`.
