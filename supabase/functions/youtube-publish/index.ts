@@ -188,12 +188,37 @@ Deno.serve(async (req) => {
   // а claim ниже никогда не загрузит тот же ролик второй раз.
   const { data: dueRelease, error: dueReleaseError } = await admin
     .from("youtube_publish_queue")
-    .select("id")
+    .select("id, account_id, youtube_video_id")
     .eq("status", "uploaded").lt("scheduled_at", new Date().toISOString());
   if (dueReleaseError) {
     console.error("youtube release scan failed", { code: "YOUTUBE_RELEASE_SCAN_FAILED" });
   }
   for (const candidate of dueRelease ?? []) {
+    // Срок по нашим часам — не доказательство выхода: заказчица могла
+    // передвинуть publishAt в студии (олень 01.09 «вышел» у нас, оставаясь
+    // скрытым до 02.09). Сверяем с YouTube и подтягиваем слот к его времени.
+    if (candidate.account_id && candidate.youtube_video_id) {
+      try {
+        const token = await freshAccessToken(admin, candidate.account_id);
+        const res = await fetch(
+          `https://www.googleapis.com/youtube/v3/videos?part=status&id=${candidate.youtube_video_id}`,
+          { headers: { Authorization: `Bearer ${token}` } },
+        );
+        const body = await res.json();
+        const st = body.items?.[0]?.status;
+        if (st && st.privacyStatus !== "public") {
+          if (st.publishAt) {
+            await admin.from("youtube_publish_queue")
+              .update({ scheduled_at: st.publishAt, updated_at: new Date().toISOString() })
+              .eq("id", candidate.id);
+          }
+          continue;
+        }
+      } catch (e) {
+        console.error("youtube status check failed", { id: candidate.id, message: String(e).slice(0, 200) });
+        continue;
+      }
+    }
     const { data, error } = await admin.rpc("release_youtube_publication_lineage", {
       p_queue_id: candidate.id,
     });
