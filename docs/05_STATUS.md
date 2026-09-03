@@ -1229,3 +1229,27 @@ ridsochi = моё MCP-подключение видит проект напря�
   17:00 — строка возвращена в `uploaded`; воркер теперь перед «вышел» сверяет
   privacyStatus и подтягивает слот к publishAt.
 Долг: два лишних draft-оленя в очереди (00042dc8, 7fbb7577) — разобрать, чей.
+
+## 03.09.2026 — повторяющиеся YouTube-идеи устранены в production
+
+Причина подтверждена по deployed source и базе: production `suggest-ideas`
+вместо генерации всегда возвращал четыре жёстко записанных V0.1 concept плюс
+CONTROL. Поэтому фламинго встречался 17 раз, остальные fixed concepts — по 14.
+
+Исправлено узко, без изменения Telegram owner flow и без Veo:
+- `suggest-ideas` version 21 генерирует новую surface adaptation из trusted
+  causal contract и передаёт модели всю уже показанную YouTube-историю как
+  запретный список;
+- deterministic validator не принимает повтор `slug`, хука, реплики или
+  scenario prompt и не доверяет модели causal metadata;
+- при двух неудачных попытках возвращается явная ошибка, старые пять карточек
+  больше не отправляются;
+- `trg_reject_duplicate_youtube_idea` сериализует inserts per owner и блокирует
+  совпадение непосредственно в БД; существующие записи не удалялись.
+
+Проверка: focused 19 passed, 0 failed, 1 live API test skipped; production
+`preview_only` — HTTP 200, 5 новых идей, 0 записей/Telegram-сообщений;
+duplicate-trigger отработал транзакционно.
+Полный локальный набор: 271 passed, 1 skipped, 1 unrelated existing failure
+в `creative-identity.test.mjs` (устаревшее ожидание формы запроса в уже
+изменённом `youtube-publish`); no-repeat tests зелёные.

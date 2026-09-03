@@ -11,13 +11,17 @@
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
   TARGET_PLATFORMS,
-  buildYoutubeApprovedFallback,
   fetchYoutubeTrendCandidates,
+  formatTrendContext,
   normalizeTargetPlatform,
   platformLabel,
   selectYoutubeExperimentSet,
   trustedIdeaMetadata,
 } from "../_shared/youtube-trend.mjs";
+import {
+  compactYoutubeHistory,
+  validateYoutubeNovelIdeas,
+} from "../_shared/youtube-idea-novelty.mjs";
 import { callerIsServiceRole } from "../_shared/tiktok.ts";
 import {
   buildTikTokFeedbackContext,
@@ -161,6 +165,31 @@ const TIKTOK_MARKET_SCHEMA = {
   },
 };
 
+const YOUTUBE_IDEA_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    ideas: {
+      type: "ARRAY",
+      items: {
+        type: "OBJECT",
+        properties: {
+          reference_id: { type: "STRING" },
+          causal_pattern_class: { type: "STRING" },
+          slug: { type: "STRING", description: "unique lowercase latin slug with hyphens" },
+          animal: { type: "STRING", description: "one original animal or character type in Russian" },
+          hook: { type: "STRING", description: "clear Russian uppercase question, ideally under 40 characters" },
+          line: { type: "STRING", description: "short original Russian deadpan line that fits a ten-second video" },
+          prompt: { type: "STRING", description: "concise English visual scenario preserving the required causal beats" },
+        },
+        required: [
+          "reference_id", "causal_pattern_class", "slug", "animal", "hook", "line", "prompt",
+        ],
+      },
+    },
+  },
+  required: ["ideas"],
+};
+
 const html = (value: unknown) => String(value ?? "")
   .replace(/&/g, "&amp;")
   .replace(/</g, "&lt;")
@@ -182,6 +211,100 @@ async function configuredOwner(admin: SupabaseClient): Promise<string | null> {
   return !error && typeof data === "string" &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data)
     ? data : null;
+}
+
+async function loadPlatformIdeaHistory(
+  admin: SupabaseClient,
+  userId: string,
+  targetPlatform: string,
+) {
+  const pageSize = 500;
+  const rows: Array<Record<string, any>> = [];
+  for (let from = 0;; from += pageSize) {
+    const { data, error } = await admin
+      .from("video_ideas")
+      .select("slug,animal,hook,line,prompt,reference_source_id,target_platform,created_at")
+      .eq("user_id", userId)
+      .eq("target_platform", targetPlatform)
+      .order("created_at", { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < pageSize) return rows;
+  }
+}
+
+async function generateYoutubeNovelIdeas(
+  admin: SupabaseClient,
+  experimentSet: Array<Record<string, any>>,
+  history: Array<Record<string, any>>,
+) {
+  const { token: gToken, project } = await googleToken(admin);
+  const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
+    `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
+  const forbidden = compactYoutubeHistory(history);
+  const referenceContract = experimentSet.map((candidate) => ({
+    reference_id: candidate.reference_source_id,
+    causal_pattern_class: candidate.reference_source_id === "CONTROL"
+      ? "CONTROL"
+      : candidate.causal_pattern?.pattern_class,
+  }));
+  const trendContext = experimentSet.map(formatTrendContext).join("\n\n---\n\n");
+  let lastValidationError = "not_started";
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${gToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          role: "user",
+          parts: [{
+            text: `${СТИЛЬ}\n\n` +
+              `Create exactly ${experimentSet.length} NEW YouTube Shorts idea adaptations, one for each ` +
+              `reference contract below. This is attempt ${attempt} of 2.\n\n` +
+              `TRUSTED REFERENCE CONTRACTS (return these IDs and causal_pattern_class values verbatim):\n` +
+              `${JSON.stringify(referenceContract)}\n\n${trendContext}\n\n` +
+              `STRICT NOVELTY CONTRACT:\n` +
+              `- Every reference-driven adaptation MUST change character, physical prop, location, ` +
+              `money topic, dialogue, visual image and concrete plot.\n` +
+              `- It MUST preserve the trusted causal beat order, viewer prediction, violation class, ` +
+              `escalation mechanism and payoff class.\n` +
+              `- Do not merely swap the animal in an old story. Do not reuse or lightly paraphrase ` +
+              `any forbidden idea below.\n` +
+              `- CONTROL stays the current Street Economy house format and must not acquire a ` +
+              `reference-derived causal mechanism.\n` +
+              `- Each concept must be physically readable in about 10 seconds, vertical 9:16, ` +
+              `with one main character, one main prop/mechanism, an immediate visual hook, minimal ` +
+              `scene changes and short Russian dialogue.\n` +
+              `- prompt must be concise English; hook and line must be original Russian.\n\n` +
+              `ALREADY DELIVERED — FORBIDDEN TO REPEAT OR PARAPHRASE:\n` +
+              `${JSON.stringify(forbidden)}\n\n` +
+              (attempt > 1
+                ? `The previous answer was rejected by deterministic validation: ${lastValidationError}. ` +
+                  `Replace the colliding/invalid concept completely.\n`
+                : ""),
+          }],
+        }],
+        generationConfig: {
+          temperature: 1.2,
+          responseMimeType: "application/json",
+          responseSchema: YOUTUBE_IDEA_SCHEMA,
+        },
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(JSON.stringify(data).slice(0, 300));
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
+    const generated = JSON.parse(text).ideas ?? [];
+    try {
+      return validateYoutubeNovelIdeas(generated, experimentSet, history);
+    } catch (error) {
+      lastValidationError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  throw new Error(`no_novel_youtube_ideas:${lastValidationError}`);
 }
 
 async function loadTikTokFeedbackInputs(admin: SupabaseClient, userId: string) {
@@ -441,12 +564,20 @@ Deno.serve(async (req) => {
   }
 
   const targetPlatform = normalizeTargetPlatform(profile.target_platform);
+  // The repository also contains a newer learning layer whose migrations may
+  // be deployed later. Keep this function compatible with the current
+  // production schema instead of making YouTube novelty depend on that layer.
+  const { error: feedbackSchemaError } = await admin
+    .from("video_ideas")
+    .select("feedback_batch_key,youtube_feedback_batch_key")
+    .limit(1);
+  const feedbackSchemaReady = !feedbackSchemaError;
   let feedbackContext: Awaited<ReturnType<typeof buildTikTokFeedbackContext>> | null = null;
   let marketIdeaContext: Awaited<ReturnType<typeof buildTikTokMarketIdeaContext>> | null = null;
   let batchKey: string | null = null;
   let youtubeFeedbackContext: Awaited<ReturnType<typeof buildYoutubeFeedbackContext>> | null = null;
   let youtubeBatchKeyValue: string | null = null;
-  if (targetPlatform === TARGET_PLATFORMS.TIKTOK) {
+  if (feedbackSchemaReady && targetPlatform === TARGET_PLATFORMS.TIKTOK) {
     batchKey = await feedbackBatchKey(profile.id, requestId);
     if (!previewOnly) {
       const replay = await loadStoredDecision(admin, profile.id, targetPlatform, batchKey);
@@ -455,7 +586,7 @@ Deno.serve(async (req) => {
         feedback_outcome: "REPLAY", stored_decision: replay.snapshot,
       });
     }
-  } else if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
+  } else if (feedbackSchemaReady && targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
     youtubeBatchKeyValue = await youtubeFeedbackBatchKey(profile.id, requestId);
     if (!previewOnly) {
       const replay = await loadStoredDecision(admin, profile.id, targetPlatform, youtubeBatchKeyValue);
@@ -466,7 +597,7 @@ Deno.serve(async (req) => {
     }
   }
   const evaluationAt = new Date().toISOString();
-  if (targetPlatform === TARGET_PLATFORMS.TIKTOK) {
+  if (feedbackSchemaReady && targetPlatform === TARGET_PLATFORMS.TIKTOK) {
     const feedbackInputs = await loadTikTokFeedbackInputs(admin, profile.id);
     feedbackContext = await buildTikTokFeedbackContext({
       ...feedbackInputs,
@@ -483,10 +614,15 @@ Deno.serve(async (req) => {
     .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
   if (!token) return json(400, { error: "Не удалось получить токен бота" });
 
-  // Чтобы звери не повторялись — показываем модели, кто уже был
-  const { data: былые } = await admin
-    .from("video_ideas").select("animal").eq("user_id", profile.id).limit(200);
+  // The full persisted history is the source of truth for no-repeat checks.
+  let былые: Array<Record<string, any>> = [];
+  try {
+    былые = await loadPlatformIdeaHistory(admin, profile.id, targetPlatform);
+  } catch {
+    return json(500, { error: "Не удалось проверить историю уже показанных идей" });
+  }
   const занятые = [...new Set((былые ?? []).map((r) => r.animal).filter(Boolean))];
+  const youtubeHistory = targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS ? (былые ?? []) : [];
 
   let ideas: Array<Record<string, any>> = [];
   let experimentSet: Array<Record<string, unknown>> = [];
@@ -497,22 +633,31 @@ Deno.serve(async (req) => {
         apiKey: Deno.env.get("YOUTUBE_API_KEY"),
       });
       experimentSet = selectYoutubeExperimentSet(candidates, count);
-      const youtubeInputs = await loadYoutubeFeedbackInputs(admin, profile.id);
-      youtubeFeedbackContext = await buildYoutubeFeedbackContext({
-        ...youtubeInputs, market_references: experimentSet, evaluation_at: evaluationAt,
-      });
+      if (feedbackSchemaReady) {
+        const youtubeInputs = await loadYoutubeFeedbackInputs(admin, profile.id);
+        youtubeFeedbackContext = await buildYoutubeFeedbackContext({
+          ...youtubeInputs, market_references: experimentSet, evaluation_at: evaluationAt,
+        });
+      }
     }
   } catch (e) {
     return json(500, { error: `Trend input недоступен: ${e instanceof Error ? e.message : String(e)}` });
   }
 
   if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
-    // First field trial uses only the four already Controller-approved V0.1
-    // adaptations plus CONTROL. A live model may rewrite their causal beats,
-    // so it is deliberately not placed between trusted DNA and Telegram cards.
-    ideas = buildYoutubeApprovedFallback(experimentSet);
+    try {
+      ideas = await generateYoutubeNovelIdeas(admin, experimentSet, youtubeHistory);
+    } catch (e) {
+      // Never fall back to the already delivered fixed five. An explicit error
+      // is safer than silently sending the same cards for the sixteenth time.
+      return json(409, {
+        error: `Новые YouTube-идеи не созданы; повторы не отправлены: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      });
+    }
     if (youtubeFeedbackContext) ideas = await annotateYoutubeCandidates(ideas, youtubeFeedbackContext);
-    ideaSource = "controller-approved-v0.1";
+    ideaSource = "novel-reference-adaptation-v0.1";
   } else {
     try {
       const { token: gToken, project } = await googleToken(admin);
@@ -567,7 +712,7 @@ Deno.serve(async (req) => {
       line: idea.line,
       prompt: idea.prompt,
       target_platform: targetPlatform,
-      ...(targetPlatform === TARGET_PLATFORMS.TIKTOK
+      ...(targetPlatform === TARGET_PLATFORMS.TIKTOK && feedbackSchemaReady
         ? {
           why_this_idea: idea.why_this_idea ?? null,
           idea_pattern: idea.idea_pattern ?? null,
@@ -591,20 +736,22 @@ Deno.serve(async (req) => {
       ...(targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
         ? {
           ...trustedIdeaMetadata(candidate),
-          market_reference_ids: idea.market_reference_ids ?? [idea.reference_id],
-          selected_lesson_ids: idea.selected_lesson_ids ?? [],
-          avoided_lesson_ids: idea.avoided_lesson_ids ?? [],
-          own_experiment_ids: idea.own_experiment_ids ?? [],
-          changed_variable: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
-            ? idea.changed_variable ?? null : null,
-          experiment_constants: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
-            ? idea.experiment_constants ?? null : null,
-          why_this_idea: idea.why_this_idea,
-          idea_pattern: `${idea.reference_id ?? "CONTROL"}|${idea.slug}`,
-          evidence_roots: idea.evidence_roots,
-          evidence_conflicts: idea.evidence_conflicts ?? [],
-          idea_confidence: idea.idea_confidence ?? "LOW",
-          evidence_mode: idea.evidence_mode ?? "MARKET_REFERENCE_ONLY",
+          ...(feedbackSchemaReady ? {
+            market_reference_ids: idea.market_reference_ids ?? [idea.reference_id],
+            selected_lesson_ids: idea.selected_lesson_ids ?? [],
+            avoided_lesson_ids: idea.avoided_lesson_ids ?? [],
+            own_experiment_ids: idea.own_experiment_ids ?? [],
+            changed_variable: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
+              ? idea.changed_variable ?? null : null,
+            experiment_constants: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
+              ? idea.experiment_constants ?? null : null,
+            why_this_idea: idea.why_this_idea ?? null,
+            idea_pattern: `${idea.reference_id ?? "CONTROL"}|${idea.slug}`,
+            evidence_roots: idea.evidence_roots ?? [],
+            evidence_conflicts: idea.evidence_conflicts ?? [],
+            idea_confidence: idea.idea_confidence ?? "LOW",
+            evidence_mode: idea.evidence_mode ?? "MARKET_REFERENCE_ONLY",
+          } : {}),
         }
         : {}),
     };

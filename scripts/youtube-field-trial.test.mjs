@@ -99,8 +99,12 @@ test('production Telegram wiring keeps existing buttons and does not call Veo in
   }
   assert.match(suggest, /fetchYoutubeTrendCandidates/);
   assert.match(suggest, /targetPlatform === TARGET_PLATFORMS\.YOUTUBE_SHORTS/);
-  assert.match(suggest, /ideas = buildYoutubeApprovedFallback\(experimentSet\)/);
-  assert.match(suggest, /ideaSource = "controller-approved-v0\.1"/);
+  assert.match(suggest, /generateYoutubeNovelIdeas\(admin, experimentSet, youtubeHistory\)/);
+  assert.match(suggest, /validateYoutubeNovelIdeas/);
+  assert.match(suggest, /loadPlatformIdeaHistory\(admin, profile\.id, targetPlatform\)/);
+  assert.match(suggest, /\.range\(from, from \+ pageSize - 1\)/);
+  assert.doesNotMatch(suggest, /ideas = buildYoutubeApprovedFallback\(experimentSet\)/);
+  assert.match(suggest, /повторы не отправлены/);
 
   const ideaButton = source('supabase/functions/idea-button/index.ts');
   const selfStart = ideaButton.indexOf('if (action === "self")', ideaButton.indexOf('// Промт по идее'));

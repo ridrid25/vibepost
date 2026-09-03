@@ -198,3 +198,9 @@ VibePost без новой БД.
 
 **Граница V0.1:** бесплатная ручная генерация и ручная публикация на YouTube.
 Paid Veo и YouTube uploader не включены. TikTok production path не изменён.
+
+**✅ Чекап no-repeat 03.09:** удалён статический fallback из production
+`suggest-ideas`; генератор получает persisted YouTube history, результат
+проходит deterministic validation, а DB-trigger блокирует совпадение при
+конкурентных вызовах. Live `preview_only` вернул 5 новых кандидатов без записи
+и без Telegram-отправки; duplicate-trigger проверен транзакционно.
