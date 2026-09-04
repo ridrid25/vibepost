@@ -280,3 +280,10 @@ grant update (post_description) on public.incoming_videos to authenticated;
 alter table public.incoming_videos
   add column if not exists raw_video_url text,
   add column if not exists burned_hook text;
+
+-- 04.09: двусторонняя связь времени выхода со студией YouTube.
+alter table public.youtube_publish_queue add column if not exists youtube_publish_at timestamptz;
+drop policy if exists youtube_publish_queue_owner_update on public.youtube_publish_queue;
+create policy youtube_publish_queue_owner_update on public.youtube_publish_queue
+  for update using ((select auth.uid()) = user_id and status in ('draft','scheduled','failed','uploaded'))
+  with check ((select auth.uid()) = user_id);

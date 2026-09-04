@@ -204,6 +204,58 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Шаг 1б. Время выхода — двусторонняя связь (заказчица 04.09: «если я меняю
+  // время, оно меняется в студии?»). youtube_publish_at — последнее время,
+  // о котором мы договорились с YouTube. Разошлись наше время и оно — значит,
+  // она передвинула карандашом у нас: отправляем на YouTube. Разошлось время
+  // YouTube и оно — передвинула в студии: подтягиваем к нам. Оба — студия главнее.
+  const { data: inStudio } = await admin.from("youtube_publish_queue")
+    .select("id, account_id, youtube_video_id, scheduled_at, youtube_publish_at")
+    .eq("status", "uploaded").not("youtube_video_id", "is", null);
+  for (const row of inStudio ?? []) {
+    if (!row.account_id) continue;
+    try {
+      const token = await freshAccessToken(admin, row.account_id);
+      const res = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=status&id=${row.youtube_video_id}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const st = (await res.json()).items?.[0]?.status;
+      if (!st || st.privacyStatus === "public" || !st.publishAt) continue;
+      const ytMs = new Date(st.publishAt).getTime();
+      const ourMs = new Date(row.scheduled_at).getTime();
+      const knownMs = row.youtube_publish_at ? new Date(row.youtube_publish_at).getTime() : ytMs;
+      if (ytMs !== knownMs || ourMs === ytMs) {
+        // Студия изменила (или всё совпадает) — наша строка следует за ней.
+        if (ourMs !== ytMs || row.youtube_publish_at === null) {
+          await admin.from("youtube_publish_queue").update({
+            scheduled_at: st.publishAt, youtube_publish_at: st.publishAt,
+            updated_at: new Date().toISOString(),
+          }).eq("id", row.id);
+        }
+        continue;
+      }
+      // Изменили у нас — переносим на YouTube.
+      const upd = await fetch("https://www.googleapis.com/youtube/v3/videos?part=status", {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: row.youtube_video_id,
+          status: { privacyStatus: "private", publishAt: new Date(ourMs).toISOString(), selfDeclaredMadeForKids: false },
+        }),
+      });
+      if (upd.ok) {
+        await admin.from("youtube_publish_queue").update({
+          youtube_publish_at: new Date(ourMs).toISOString(), updated_at: new Date().toISOString(),
+        }).eq("id", row.id);
+      } else {
+        console.error("youtube publishAt push failed", { id: row.id, status: upd.status, body: (await upd.text()).slice(0, 200) });
+      }
+    } catch (e) {
+      console.error("youtube time sync failed", { id: row.id, message: String(e).slice(0, 200) });
+    }
+  }
+
   // Шаг 2. Залитые скрытыми, чей срок прошёл, — YouTube уже опубликовал сам.
   // RPC атомарно сохраняет известную lineage и только затем меняет status.
   // Ошибка оставляет строку uploaded: следующий вызов повторяет только metadata,
@@ -309,6 +361,7 @@ Deno.serve(async (req) => {
     await admin.from("youtube_publish_queue").update({
       status: "uploaded",
       youtube_video_id: youtubeId,
+      youtube_publish_at: new Date(item.scheduled_at).toISOString(),
       account_id: accountId,
       error: null,
       updated_at: new Date().toISOString(),
