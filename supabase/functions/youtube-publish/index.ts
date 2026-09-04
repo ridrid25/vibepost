@@ -178,9 +178,31 @@ Deno.serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  // Галочка сама НИЧЕГО не заливает (решение заказчицы 29.08): ролик уходит в
-  // расписание только после её выбора музыки — статус scheduled ставит микшер,
-  // когда вшил выбранный отрывок. Драфты здесь не трогаем.
+  // Шаг 1. Галочка = ролик сам идёт в очередь. Возврат к поведению до 29.08
+  // по слову заказчицы 04.09: «я хочу сама их там увидеть и пустить, а не
+  // каждый раз тебе говорить». Ждать музыку из VibePost нечего — её там нет,
+  // музыку она вешает в студии по кнопке из бота. Черновикам с прошедшим или
+  // занятым слотом даём ближайший свободный: по два в день, 10:00 и 17:00 МСК.
+  const { data: drafts } = await admin.from("youtube_publish_queue")
+    .select("id, scheduled_at").eq("status", "draft").order("scheduled_at");
+  if (drafts?.length) {
+    const { data: busyRows } = await admin.from("youtube_publish_queue")
+      .select("scheduled_at").in("status", ["scheduled", "processing", "uploaded"]);
+    const busy = new Set((busyRows ?? []).map((r) => new Date(r.scheduled_at).getTime()));
+    let cursor = new Date();
+    for (const d of drafts) {
+      let slot = new Date(d.scheduled_at);
+      if (slot.getTime() < Date.now() + 3 * 3600_000 || busy.has(slot.getTime())) {
+        do { slot = nextSlot(cursor); cursor = slot; } while (busy.has(slot.getTime()));
+      }
+      busy.add(slot.getTime());
+      await admin.from("youtube_publish_queue").update({
+        status: "scheduled",
+        scheduled_at: slot.toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("id", d.id);
+    }
+  }
 
   // Шаг 2. Залитые скрытыми, чей срок прошёл, — YouTube уже опубликовал сам.
   // RPC атомарно сохраняет известную lineage и только затем меняет status.
