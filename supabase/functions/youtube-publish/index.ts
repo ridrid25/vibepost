@@ -183,6 +183,14 @@ Deno.serve(async (req) => {
   // каждый раз тебе говорить». Ждать музыку из VibePost нечего — её там нет,
   // музыку она вешает в студии по кнопке из бота. Черновикам с прошедшим или
   // занятым слотом даём ближайший свободный: по два в день, 10:00 и 17:00 МСК.
+  // Скрытые заказчицей карточки («Скрыть» во «Входящих») — брак, в очередь не
+  // берём и из очереди убираем: енот 07.09 всплывал пять раз после её удалений.
+  const { data: hidden } = await admin.from("incoming_videos").select("id").eq("status", "dismissed");
+  const hiddenIds = (hidden ?? []).map((h) => h.id);
+  if (hiddenIds.length) {
+    await admin.from("youtube_publish_queue").delete()
+      .in("status", ["draft", "scheduled", "failed"]).in("incoming_video_id", hiddenIds);
+  }
   const { data: drafts } = await admin.from("youtube_publish_queue")
     .select("id, scheduled_at").eq("status", "draft").order("scheduled_at");
   if (drafts?.length) {
