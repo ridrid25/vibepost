@@ -293,37 +293,13 @@ Deno.serve(async (req) => {
     }
     const fastReviewMs = elapsedMs(fastReviewStartedAt);
 
-    // Одна идея — одна карточка. Переделка того же ролика заменяет видео в
-    // открытой карточке, а не рождает новую: 01.09 фламинго приехал пятью
-    // карточками подряд, заказчица скрывала их одну за другой и потеряла
-    // своё название и описание.
-    let открытая: { id: string; name: string | null } | null = null;
+    // Каждый присланный файл — своя карточка. Схлопывание «одна идея — одна
+    // карточка» (02.09) отменено 07.09: бот вешает на файл без подписи
+    // активную идею, и пять разных роликов 06.09 (волк, две обезьяны, два
+    // хамелеона) легли в две карточки, затирая друг друга. Лишняя карточка
+    // лучше потерянного ролика.
     let incomingVideoId: string | null = null;
-    if (idea?.id) {
-      const { data } = await admin.from("incoming_videos")
-        .select("id,name").eq("idea_id", idea.id).in("status", ["new", "rework"])
-        .order("created_at", { ascending: false }).limit(1).maybeSingle();
-      открытая = data;
-    }
-    if (открытая) {
-      const { error: updateError } = await admin.from("incoming_videos").update({
-        video_url: videoUrl,
-        raw_video_url: videoUrl,
-        polished_at: null,
-        status: "new",
-        rework_at: null,
-        measure_avg: null, measure_worst: null, measure_cuts: null,
-        review: разбор.review,
-        tag: разбор.tag?.slice(0, 40) || null,
-        causal_pattern_review: causalPattern ? null : "UNCERTAIN",
-      }).eq("id", открытая.id);
-      if (updateError) throw new Error(`incoming video update failed: ${updateError.code ?? "unknown"}`);
-      incomingVideoId = открытая.id;
-      await ответить(
-        `Переделка принята: «${открытая.name ?? name}». Ролик в карточке заменён, ` +
-        `название и описание сохранены, титры перевешу.`,
-      );
-    } else {
+    {
       const { data: inserted, error: insertError } = await admin.from("incoming_videos").insert({
         user_id: profile.id,
         idea_id: idea?.id ?? null,
