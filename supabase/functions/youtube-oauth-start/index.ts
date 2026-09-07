@@ -37,7 +37,9 @@ Deno.serve(async (req) => {
   } catch { /* не JWT — уйдёт по ветке пользователя */ }
 
   let userId: string | null = null;
-  if (role === "service_role") {
+  // Ключ нового формата (sb_secret_…) — не JWT, роль из него не вычитать;
+  // 07.09 из-за этого /yt_connect в боте отвечал «Требуется вход в VibePost».
+  if (role === "service_role" || (serviceKey && bearer === serviceKey)) {
     userId = typeof body.user_id === "string" ? body.user_id : null;
     if (!userId) return json(400, { error: "user_id обязателен при вызове с service_role" });
   } else {
