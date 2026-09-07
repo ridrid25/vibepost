@@ -317,62 +317,9 @@ Deno.serve(async (req) => {
       `Вышел на YouTube: «${row.title}»\nhttps://youtube.com/shorts/${row.youtube_video_id}`);
   }
 
-  // Шаг 3. Передача ролика заказчице — за 20 минут до слота, в бот.
-  // Автозаливка в студию выключена 07.09 по её слову: звук к Shorts можно
-  // добавить только при загрузке с телефона, залитое воркером ей приходилось
-  // удалять («ему звук уже туда не подвесишь»). Файл, название и описание
-  // приходят в бот, она загружает через «+» в YouTube со своим звуком.
-  const { data: due } = await admin.from("youtube_publish_queue")
-    .select("id, user_id, title, description, storage_bucket, storage_path, video_url, scheduled_at, incoming_video_id")
-    .eq("status", "scheduled").lte("scheduled_at", new Date(Date.now() + 20 * 60_000).toISOString())
-    .order("scheduled_at").limit(1);
-  const item = (due?.[0] ?? null) as (QueueItem & { incoming_video_id?: string | null }) | null;
-  if (!item) return json(200, { done: 0, message: "передавать нечего" });
-
-  try {
-    let description = item.description;
-    if (item.incoming_video_id) {
-      const { data: clip } = await admin.from("incoming_videos")
-        .select("post_description").eq("id", item.incoming_video_id).maybeSingle();
-      if (clip?.post_description) description = clip.post_description;
-    }
-    const video = await downloadVideo(admin, item);
-
-    const { data: profile } = await admin.from("profiles")
-      .select("error_notify_tg_id").eq("id", item.user_id).maybeSingle();
-    const token = Deno.env.get("TELEGRAM_TEST_BOT_TOKEN");
-    if (!profile?.error_notify_tg_id || !token) throw new Error("некуда прислать: нет чата бота");
-
-    const fd = new FormData();
-    fd.append("chat_id", String(profile.error_notify_tg_id));
-    fd.append("video", video, "video.mp4");
-    fd.append("caption",
-      `YouTube, ${мск(item.scheduled_at)}: «${item.title}»
-
-` +
-      `Загрузите через «+» в YouTube со своим звуком. Название и описание — следующим сообщением, скопируйте.`);
-    const sent = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, { method: "POST", body: fd });
-    const sentBody = await sent.json().catch(() => ({}));
-    if (!sentBody.ok) throw new Error(`sendVideo: ${JSON.stringify(sentBody).slice(0, 200)}`);
-
-    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: profile.error_notify_tg_id, text: `${item.title}
-
-${description}` }),
-    });
-
-    await admin.from("youtube_publish_queue").update({
-      status: "handed", handed_at: new Date().toISOString(), error: null,
-      updated_at: new Date().toISOString(),
-    }).eq("id", item.id);
-    return json(200, { done: 1, handed: item.id });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error("youtube hand-over failed", { id: item.id, message: message.slice(0, 300) });
-    await admin.from("youtube_publish_queue").update({
-      error: message.slice(0, 500), updated_at: new Date().toISOString(),
-    }).eq("id", item.id);
-    return json(200, { done: 0, failed: item.id, error: message.slice(0, 200) });
-  }
+  // Шаг 3 выключен 07.09 по слову заказчицы («Стоп, я ничего не говорила,
+  // что он уходит в студию»): воркер ничего не заливает и ничего не шлёт.
+  // Очередь в приложении — её план; на канал ролики попадают её руками.
+  // Воркер оставлен ради шагов 1–2: слоты, сверка со студией, статусы «вышел».
+  return json(200, { done: 0, message: "заливка выключена" });
 });
