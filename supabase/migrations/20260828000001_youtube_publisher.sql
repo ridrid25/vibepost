@@ -287,3 +287,9 @@ drop policy if exists youtube_publish_queue_owner_update on public.youtube_publi
 create policy youtube_publish_queue_owner_update on public.youtube_publish_queue
   for update using ((select auth.uid()) = user_id and status in ('draft','scheduled','failed','uploaded'))
   with check ((select auth.uid()) = user_id);
+
+-- 07.09: автозаливка выключена — очередь передаёт ролик заказчице в бот (status 'handed').
+alter table public.youtube_publish_queue drop constraint if exists youtube_publish_queue_status_check;
+alter table public.youtube_publish_queue add constraint youtube_publish_queue_status_check
+  check (status = any (array['draft','scheduled','processing','uploaded','handed','published','failed']));
+alter table public.youtube_publish_queue add column if not exists handed_at timestamptz;

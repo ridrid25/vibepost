@@ -309,77 +309,62 @@ Deno.serve(async (req) => {
       `Вышел на YouTube: «${row.title}»\nhttps://youtube.com/shorts/${row.youtube_video_id}`);
   }
 
-  // Шаг 3. Заливка в студию — за 48 часов до выхода, скрытым с publishAt.
-  const { data: claimed, error: claimError } = await admin
-    .rpc("claim_due_youtube_publish", { p_limit: 1 });
-  if (claimError) return json(500, { error: claimError.message });
-  const item = (Array.isArray(claimed) ? claimed[0] : null) as QueueItem | null;
-  if (!item) return json(200, { done: 0, message: "заливать нечего" });
-
-  const fail = async (message: string) => {
-    // До 3 попыток: сетевые сбои и 5xx Google переживаем, вернув задание в
-    // очередь со сдвигом на 30 минут. После третьей — failed и сигнал хозяйке.
-    const terminal = item.attempts >= 3;
-    await admin.from("youtube_publish_queue").update({
-      status: terminal ? "failed" : "scheduled",
-      scheduled_at: terminal
-        ? undefined
-        : new Date(Date.now() + 30 * 60_000).toISOString(),
-      error: message.slice(0, 500),
-      updated_at: new Date().toISOString(),
-    }).eq("id", item.id);
-    if (terminal) {
-      await tellOwner(admin, item.user_id,
-        `Не смог залить в студию «${item.title}» после 3 попыток: ${message.slice(0, 200)}`);
-    }
-    return json(200, { done: 0, failed: item.id, error: message.slice(0, 200) });
-  };
+  // Шаг 3. Передача ролика заказчице — за 20 минут до слота, в бот.
+  // Автозаливка в студию выключена 07.09 по её слову: звук к Shorts можно
+  // добавить только при загрузке с телефона, залитое воркером ей приходилось
+  // удалять («ему звук уже туда не подвесишь»). Файл, название и описание
+  // приходят в бот, она загружает через «+» в YouTube со своим звуком.
+  const { data: due } = await admin.from("youtube_publish_queue")
+    .select("id, user_id, title, description, storage_bucket, storage_path, video_url, scheduled_at, incoming_video_id")
+    .eq("status", "scheduled").lte("scheduled_at", new Date(Date.now() + 20 * 60_000).toISOString())
+    .order("scheduled_at").limit(1);
+  const item = (due?.[0] ?? null) as (QueueItem & { incoming_video_id?: string | null }) | null;
+  if (!item) return json(200, { done: 0, message: "передавать нечего" });
 
   try {
-    let accountId = item.account_id;
-    if (!accountId) {
-      const { data: account } = await admin.from("youtube_accounts")
-        .select("id").eq("user_id", item.user_id).eq("auth_status", "active")
-        .limit(1).maybeSingle();
-      if (!account) return await fail("нет активного YouTube-аккаунта");
-      accountId = account.id;
-    }
-
-    // Описание — свойство ролика (31.08): выбранный заказчицей текст на
-    // карточке главнее заготовки очереди.
-    const itemAny = item as unknown as { incoming_video_id?: string | null };
-    if (itemAny.incoming_video_id) {
+    let description = item.description;
+    if (item.incoming_video_id) {
       const { data: clip } = await admin.from("incoming_videos")
-        .select("post_description").eq("id", itemAny.incoming_video_id).maybeSingle();
-      if (clip?.post_description) item.description = clip.post_description;
+        .select("post_description").eq("id", item.incoming_video_id).maybeSingle();
+      if (clip?.post_description) description = clip.post_description;
     }
-
-    const accessToken = await freshAccessToken(admin, accountId);
     const video = await downloadVideo(admin, item);
-    const youtubeId = await uploadToYouTube(accessToken, item, video);
+
+    const { data: profile } = await admin.from("profiles")
+      .select("error_notify_tg_id").eq("id", item.user_id).maybeSingle();
+    const token = Deno.env.get("TELEGRAM_TEST_BOT_TOKEN");
+    if (!profile?.error_notify_tg_id || !token) throw new Error("некуда прислать: нет чата бота");
+
+    const fd = new FormData();
+    fd.append("chat_id", String(profile.error_notify_tg_id));
+    fd.append("video", video, "video.mp4");
+    fd.append("caption",
+      `YouTube, ${мск(item.scheduled_at)}: «${item.title}»
+
+` +
+      `Загрузите через «+» в YouTube со своим звуком. Название и описание — следующим сообщением, скопируйте.`);
+    const sent = await fetch(`https://api.telegram.org/bot${token}/sendVideo`, { method: "POST", body: fd });
+    const sentBody = await sent.json().catch(() => ({}));
+    if (!sentBody.ok) throw new Error(`sendVideo: ${JSON.stringify(sentBody).slice(0, 200)}`);
+
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: profile.error_notify_tg_id, text: `${item.title}
+
+${description}` }),
+    });
 
     await admin.from("youtube_publish_queue").update({
-      status: "uploaded",
-      youtube_video_id: youtubeId,
-      youtube_publish_at: new Date(item.scheduled_at).toISOString(),
-      account_id: accountId,
-      error: null,
+      status: "handed", handed_at: new Date().toISOString(), error: null,
       updated_at: new Date().toISOString(),
     }).eq("id", item.id);
-
-    await tellOwner(
-      admin,
-      item.user_id,
-      `«${item.title}» повесил в студию, выйдет ${мск(item.scheduled_at)}.\n` +
-        `Осталось подобрать музыку — кнопка ниже, вкладка «Аудио», сохранить.`,
-      // approve_browser_access: без него мобильная студия показывает заглушку
-      // «установите приложение» и теряет адрес ролика.
-      { text: "🎵 Подобрать музыку", url: `https://studio.youtube.com/video/${youtubeId}/editor?approve_browser_access=true` },
-    );
-    return json(200, { done: 1, id: item.id, youtube_video_id: youtubeId });
+    return json(200, { done: 1, handed: item.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error("youtube-publish failed", { id: item.id, message: message.slice(0, 300) });
-    return await fail(message);
+    console.error("youtube hand-over failed", { id: item.id, message: message.slice(0, 300) });
+    await admin.from("youtube_publish_queue").update({
+      error: message.slice(0, 500), updated_at: new Date().toISOString(),
+    }).eq("id", item.id);
+    return json(200, { done: 0, failed: item.id, error: message.slice(0, 200) });
   }
 });
