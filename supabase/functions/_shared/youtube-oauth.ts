@@ -7,6 +7,9 @@ export const YOUTUBE_SCOPES = [
   // youtube.upload позволяет только заливать — 28.08 не смогли отменить
   // publishAt через API и застряли в UI студии.
   "https://www.googleapis.com/auth/youtube",
+  // Чтение аналитики канала (возраст, пол, география, источники) — для
+  // разбора аудитории по её просьбе 07.09.
+  "https://www.googleapis.com/auth/yt-analytics.readonly",
 ];
 
 export function randomState(): string {
