@@ -227,6 +227,23 @@ if (надписи) {
 }
 
 // ── Итог ──────────────────────────────────────────────────────────────────
+// Правило 56 журнала: схема движения не повторяется третий раз подряд.
+{
+  const бегНаКамеру = (t) => /racing backwards|camera (racing|rushing|flying) back|sprint(s|ing)? (at|into|toward) the lens|at the lens[^"]{0,60}sprint/i.test(t);
+  try {
+    const { readdirSync, statSync } = await import('node:fs');
+    const { dirname, join, resolve } = await import('node:path');
+    const папка = dirname(resolve(файл));
+    const свои = resolve(файл);
+    const прошлые = readdirSync(папка).filter((f) => f.endsWith('.json') && resolve(join(папка, f)) !== свои)
+      .map((f) => ({ f: join(папка, f), t: statSync(join(папка, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t).slice(0, 2)
+      .map((x) => readFileSync(x.f, 'utf8'));
+    if (бегНаКамеру(JSON.stringify(промт)) && прошлые.length === 2 && прошлые.every(бегНаКамеру)) {
+      беды.push('схема «бег на камеру, камера пятится» третий промт подряд — правило 56: возьми боковой проезд, «мир летит в героя» или кружение');
+    }
+  } catch { /* нет папки — нет проверки */ }
+}
 console.log('\nЧТО СОШЛОСЬ');
 for (const з of заметки) console.log('  ·', з);
 
