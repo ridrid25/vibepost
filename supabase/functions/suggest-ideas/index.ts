@@ -123,7 +123,13 @@ Telegram-канала о личных финансах. Формат каждо�
 лес, нора) или, наоборот, совсем не подходящая ему обстановка. Улица — лишь
 один из вариантов, не норма.
 Аудитория — русскоязычные взрослые, которых волнуют инфляция, зарплата, кредиты,
-налоги, ипотека, накопления, подписки, маркетплейсы, отпуск, пенсия.`;
+налоги, ипотека, накопления, подписки, маркетплейсы, отпуск, пенсия.
+Правила реплики и хука (заказчица, 07.09): реплика — утверждение и удар,
+два коротких предложения, взрослый сухой юмор. Запрещены слова-страховки
+«кажется», «похоже», «вроде», «где-то» и схема «первые два… третий…» —
+она уже штамповалась пять раз подряд. Хук в кадре — не обязательно вопрос:
+оба лучших ролика канала были утверждениями («НА ДНЕ УЮТНЕЕ, ЧЕМ В ДОЛГАХ»,
+«ИНФЛЯЦИЯ ИЛИ СОСЕДИ»); формулы «…РЕАЛЕН?», «…ВОЗМОЖЕН?», «…УДАЧЕН?» запрещены.`;
 
 const TIKTOK_SCHEMA = {
   type: "OBJECT",
@@ -135,8 +141,8 @@ const TIKTOK_SCHEMA = {
         properties: {
           slug: { type: "STRING", description: "короткое имя латиницей через дефис, напр. bobr-ipoteka" },
           animal: { type: "STRING", description: "зверь по-русски, одно слово" },
-          hook: { type: "STRING", description: "хук-вопрос КАПСОМ по-русски, до 40 символов" },
-          line: { type: "STRING", description: "реплика зверя по-русски, панч в конце. СТРОГО 20-25 слогов — это всё, что влезает в ролик на 10 секунд, остальное время нужно действию. Считай гласные. Длиннее — ролик придётся резать, и заказчица потеряет свои слова" },
+          hook: { type: "STRING", description: "хук КАПСОМ по-русски, до 40 символов: утверждение, выбор «А ИЛИ Б» или вопрос; НЕ формула «…РЕАЛЕН?/ВОЗМОЖЕН?/УДАЧЕН?»" },
+          line: { type: "STRING", description: "реплика зверя по-русски: утверждение и удар, без «кажется/похоже/вроде/где-то» и без схемы «первые два… третий». СТРОГО 20-25 слогов — это всё, что влезает в ролик на 10 секунд, остальное время нужно действию. Считай гласные. Длиннее — ролик придётся резать, и заказчица потеряет свои слова" },
           prompt: { type: "STRING", description: "промпт для видеомодели по-английски в стиле серии" },
           why_this_idea: { type: "STRING", description: "кратко: какое evidence использовано и чем идея не повторяет недавние" },
         },
@@ -178,7 +184,7 @@ const YOUTUBE_IDEA_SCHEMA = {
           slug: { type: "STRING", description: "unique lowercase latin slug with hyphens" },
           animal: { type: "STRING", description: "one original animal or character type in Russian" },
           hook: { type: "STRING", description: "clear Russian uppercase question, ideally under 40 characters" },
-          line: { type: "STRING", description: "short original Russian deadpan line that fits a ten-second video" },
+          line: { type: "STRING", description: "short original Russian deadpan line: a statement plus a punch, never hedged with кажется/похоже/вроде, never the 'first two fine, third fails' template" },
           prompt: { type: "STRING", description: "concise English visual scenario preserving the required causal beats" },
         },
         required: [
@@ -272,6 +278,9 @@ async function generateYoutubeNovelIdeas(
               `escalation mechanism and payoff class.\n` +
               `- Do not merely swap the animal in an old story. Do not reuse or lightly paraphrase ` +
               `any forbidden idea below.\n` +
+              `- At most ONE reference-driven idea per batch; the rest are CONTROL. The reference ` +
+              `gives only the skeleton of the joke — never its wording.
+` +
               `- CONTROL stays the current Street Economy house format and must not acquire a ` +
               `reference-derived causal mechanism.\n` +
               `- Each concept must be physically readable in about 10 seconds, vertical 9:16, ` +
