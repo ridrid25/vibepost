@@ -181,4 +181,56 @@ const дитя = spawn(
   { cwd: корень, stdio: ['ignore', журнал, журнал] },
 );
 
-дитя.on('exit', (код) => process.exit(код ?? 0));
+/**
+ * Дежурный не смог войти — завод встаёт молча, задания копятся, и Татьяна
+ * узнаёт об этом через сутки по пустому боту. 09.09.2026 так простояло три
+ * часа: сессия Claude в командной строке разлогинилась в 02:05.
+ * Теперь при отказе входа бот сразу зовёт её нажать «Войти в Claude».
+ * Повторяем не чаще раза в 6 часов, чтобы не звонить каждый час.
+ */
+async function позватьЕслиНеВошёл() {
+  let хвост = '';
+  try {
+    const весь = readFileSync(join(корень, 'dezhurny.log'), 'utf8');
+    хвост = весь.slice(-2000);
+  } catch { return; }
+  if (!/Failed to authenticate|OAuth session expired/i.test(хвост)) return;
+
+  const метка = join(корень, '.вход-просрочен');
+  try {
+    const было = Number(readFileSync(метка, 'utf8'));
+    if (Date.now() - было < 6 * 3600_000) return;
+  } catch { /* метки нет — зовём */ }
+
+  const env = {};
+  try {
+    for (const строка of readFileSync(join(корень, '.env'), 'utf8').split(/?
+/)) {
+      const m = строка.match(/^([A-Za-z_0-9]+)=(.*)$/);
+      if (m) env[m[1]] = m[2].trim();
+    }
+  } catch { return; }
+  if (!env.TELEGRAM_TEST_BOT_TOKEN || !env.ERROR_NOTIFY_TG_ID) return;
+
+  try {
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TEST_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: Number(env.ERROR_NOTIFY_TG_ID),
+        text: 'Завод встал: дежурный не может войти в Claude, задания копятся.
+
+' +
+          'На компьютере откройте папку проекта и запустите «Войти в Claude.cmd», ' +
+          'войдите тем же аккаунтом, что и в приложении. Дальше дежурный подхватит всё сам.',
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    writeFileSync(метка, String(Date.now()));
+  } catch { /* нет сети — позовём на следующем часу */ }
+}
+
+дитя.on('exit', async (код) => {
+  if (код) await позватьЕслиНеВошёл();
+  process.exit(код ?? 0);
+});
