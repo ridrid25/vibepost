@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
   if (!cfg) return json(200, { ok: false, причина: "нет настроек" });
 
   const { data: bot } = await admin
-    .from("bots").select("token_secret_id").eq("id", cfg.bot_id).maybeSingle();
+    .from("bots").select("token_secret_id, is_active").eq("id", cfg.bot_id).maybeSingle();
   const { data: token } = await admin
     .rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
 
@@ -229,7 +229,10 @@ Deno.serve(async (req) => {
     // Публикуем сейчас и статус ставим по ответу Telegram, а не по намерению.
     const { data: чат } = await admin
       .from("chats").select("telegram_chat_id").eq("id", cfg.chat_id).maybeSingle();
-    if (!token || !чат?.telegram_chat_id) {
+    // Выключенный бот — это выключатель владельца. Планировщик такие посты не
+    // отправляет (process-scheduler фильтрует по is_active), и прямая отправка
+    // не должна становиться лазейкой в обход него.
+    if (!token || bot?.is_active === false || !чат?.telegram_chat_id) {
       const причина = "Бот неактивен/удалён или чат не найден";
       await admin.from("news_digests")
         .update({ status: "failed", last_error: причина, decided_at: new Date().toISOString() })
@@ -239,7 +242,9 @@ Deno.serve(async (req) => {
     }
 
     // Пост заводим до отправки: он и след в истории, и то, что мы правим по итогу.
-    const { data: пост } = await admin.from("posts").insert({
+    // Не завёлся — не отправляем вовсе: иначе сообщение уйдёт в канал, а следа
+    // о нём не останется нигде, и «успех» будет нечем подтвердить.
+    const { data: пост, error: ошибкаПоста } = await admin.from("posts").insert({
       user_id: черновик.user_id,
       bot_id: cfg.bot_id,
       chat_id: cfg.chat_id,
@@ -248,19 +253,25 @@ Deno.serve(async (req) => {
       scheduled_at: new Date().toISOString(),
       status: "processing",
     }).select("id").single();
-    if (пост) {
-      await admin.from("news_digests").update({ post_id: пост.id }).eq("id", черновик.id);
+    if (ошибкаПоста || !пост) {
+      const причина = `Не удалось завести пост: ${ошибкаПоста?.message ?? "пустой ответ базы"}`;
+      await admin.from("news_digests").update({
+        status: "failed",
+        last_error: причина,
+        decided_at: new Date().toISOString(),
+      }).eq("id", черновик.id);
+      await ответить("Не ушло: пост не завёлся");
+      return json(200, { ok: false, решение: "не ушло", причина });
     }
+    await admin.from("news_digests").update({ post_id: пост.id }).eq("id", черновик.id);
 
     const итог = await опубликовать(token, чат.telegram_chat_id, черновик.text);
     const теперь = new Date().toISOString();
 
     if (!итог.ok) {
       // Ни при каких условиях не 'posted': в канале ничего нет.
-      if (пост) {
-        await admin.from("posts")
-          .update({ status: "failed", error: итог.error }).eq("id", пост.id);
-      }
+      await admin.from("posts")
+        .update({ status: "failed", error: итог.error }).eq("id", пост.id);
       await admin.from("news_digests").update({
         status: "failed",
         last_error: итог.error,
@@ -271,23 +282,21 @@ Deno.serve(async (req) => {
       return json(200, { ok: false, решение: "не ушло", причина: итог.error });
     }
 
-    if (пост) {
-      await admin.from("posts").update({
-        status: "sent",
-        tg_message_id: итог.messageId,
-        sent_at: теперь,
-        error: null,
-      }).eq("id", пост.id);
-      if (итог.messageId) {
-        await admin.from("post_analytics").upsert(
-          {
-            post_id: пост.id,
-            chat_id: cfg.chat_id,
-            tg_message_id: итог.messageId,
-          },
-          { onConflict: "chat_id,tg_message_id", ignoreDuplicates: true },
-        );
-      }
+    await admin.from("posts").update({
+      status: "sent",
+      tg_message_id: итог.messageId,
+      sent_at: теперь,
+      error: null,
+    }).eq("id", пост.id);
+    if (итог.messageId) {
+      await admin.from("post_analytics").upsert(
+        {
+          post_id: пост.id,
+          chat_id: cfg.chat_id,
+          tg_message_id: итог.messageId,
+        },
+        { onConflict: "chat_id,tg_message_id", ignoreDuplicates: true },
+      );
     }
     await admin.from("news_digests").update({
       status: "posted",
