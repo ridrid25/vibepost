@@ -204,8 +204,7 @@ async function позватьЕслиНеВошёл() {
 
   const env = {};
   try {
-    for (const строка of readFileSync(join(корень, '.env'), 'utf8').split(/?
-/)) {
+    for (const строка of readFileSync(join(корень, '.env'), 'utf8').split(/\r?\n/)) {
       const m = строка.match(/^([A-Za-z_0-9]+)=(.*)$/);
       if (m) env[m[1]] = m[2].trim();
     }
@@ -218,9 +217,7 @@ async function позватьЕслиНеВошёл() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: Number(env.ERROR_NOTIFY_TG_ID),
-        text: 'Завод встал: дежурный не может войти в Claude, задания копятся.
-
-' +
+        text: 'Завод встал: дежурный не может войти в Claude, задания копятся.\n\n' +
           'На компьютере откройте папку проекта и запустите «Войти в Claude.cmd», ' +
           'войдите тем же аккаунтом, что и в приложении. Дальше дежурный подхватит всё сам.',
       }),
