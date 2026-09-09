@@ -2,40 +2,119 @@
   "duration_seconds": 10,
   "aspect_ratio": "9:16",
   "style": "3D cartoon, Pixar, dry satire",
-  "motion_rule": "a cheap grey fish behaves like a supermodel. She walks the ice across frame, never into depth, and the ice slides so every pose overshoots. Camera works her like a runway: new shot size each beat, her head half the frame; tall frame filled, no bars",
-  "character": "a plain grey-blue mackerel, dull unblinking eye, chin held high, tiny pectoral fin",
-  "second_characters": "a blue glove entering from above twice, never looking at her; a salmon head in the next tray",
-  "props": "ONE price card reading only digits, flipping up twice; A SWARM of crushed ice",
-  "prop_continuity": "the digit card is in frame from 0.00 and clicks at 5.25 and 9.30",
-  "environment": "a bright fish counter at noon, white tile and steel trays, roof glass above, nothing stacked at her sides",
-  "light_events": "hard noon glare off wet ice, bright flashes on her scales each pose, cool bounce from the tile",
+  "motion_rule": "a cheap grey fish plays supermodel. She moves across frame, never into depth; the ice slides so every pose overshoots. Shot size changes every beat exactly as written in c",
+  "character": "a plain grey-blue mackerel, dull unblinking eye, chin high, tiny pectoral fin",
+  "second_characters": "a blue glove from above twice, never looking at her; a salmon head in the next tray, its own spine already bare",
+  "props": "ONE price tag with big sharp digits that jump three times; A SWARM of crushed ice",
+  "prop_continuity": "the tag is in frame from 0.00 and its digits jump at 1.75, 5.25 and 9.30",
+  "environment": "a bright fish counter at noon, white tile and steel trays, roof glass",
+  "light_events": "hard noon glare off wet ice, bright flashes on her scales each pose",
   "audio": {
     "language": "Russian, lines verbatim; latin hints never spoken",
     "delivery": "smug oily female voice, matter-of-fact, biting off each word, 4 syllables/sec",
     "pronunciation": "pro-SHLI, vre-me-NA, lo-so-SYA, te-PER, mo-YA, O-che-red, blis-TAT, KAZH-doy, KOS-toch-ke",
     "pacing": "0.55-2.45, 3.05-5.25 and 6.55-8.70 each one breath; after 8.70 not a word, sfx keep going",
-    "lip_sync": "her jaw drops wide and her lips shape every syllable, gills flaring, mouth clear of fins, never a voice over",
-    "sfx": "market hum, ice trickling, the card clicking three times"
+    "lip_sync": "her jaw drops wide and her lips shape every syllable, gills flaring, never a voice over",
+    "sfx": "market hum, ice trickling, the tag clicking three times"
   },
   "timeline": [
-    {"t": "0.00-0.55", "a": "a heap of identical grey mackerel settles and one rears up on her tail out of it, same dull eye as the rest"},
-    {"t": "0.55-1.05", "line": "Прошли", "a": "she sucks her gills in and throws her chest out, goods turning into a diva"},
-    {"t": "1.05-1.75", "line": "времена", "a": "she shoves off with her tail, overshoots her mark and freezes chin up as if she meant it"},
-    {"t": "1.75-2.45", "line": "лосося.", "a": "her tail flips the card by the salmon head so it lands face down"},
-    {"t": "2.45-3.05", "a": "the salmon head topples on its side from her nudge, jaw hanging open; she does not look"},
-    {"t": "3.05-3.55", "line": "Теперь", "a": "a slower second pass with her tiny pectoral fin held out in front"},
-    {"t": "3.55-4.05", "line": "моя", "a": "she jabs the fin at herself, cannot reach, and bends her whole body into an arc"},
-    {"t": "4.05-4.75", "line": "очередь", "a": "she holds the arc, shuddering with effort, glare flashing off her flank"},
-    {"t": "4.75-5.25", "line": "блистать.", "a": "she rolls her side flat to the roof glass and it flares white"},
-    {"t": "5.25-5.95", "a": "the card clicks and a digit is added; she takes it for applause and arches harder"},
-    {"t": "5.95-6.55", "a": "a blue glove tips a shovel of ice over her from above, burying her to mid body, and leaves"},
-    {"t": "6.55-7.25", "line": "Ты будешь", "a": "she keeps walking the runway while buried, shoving off and not moving at all"},
-    {"t": "7.25-7.50", "line": "рад", "a": "she bursts out of the ice, flies and lands flat on her side"},
-    {"t": "7.50-8.00", "line": "каждой", "a": "she snaps her chin up as if the fall were choreography"},
-    {"t": "8.00-8.70", "line": "косточке.", "a": "she starts a grand turn to profile, tail pushing the ice"},
-    {"t": "8.70-9.30", "a": "the ice slides out and the turn carries her half a turn too far, opening her other side: a clean pink fillet cut and a bare white spine"},
-    {"t": "9.30-10.00", "a": "she holds the star pose, chin up, not seeing it, while the glove slaps the card onto her bare ribs and the digits climb again"}
+    {
+      "t": "0.00-0.55",
+      "c": "wide",
+      "a": "a heap of identical grey mackerel settles and one rears up on her tail, same dull eye as the rest"
+    },
+    {
+      "t": "0.55-1.05",
+      "c": "mid",
+      "line": "Прошли",
+      "a": "she sucks her gills in and throws her chest out, goods turning into a diva"
+    },
+    {
+      "t": "1.05-1.75",
+      "c": "wide",
+      "line": "времена",
+      "a": "she shoves off, overshoots her mark and freezes chin up as if she meant it"
+    },
+    {
+      "t": "1.75-2.45",
+      "c": "close",
+      "line": "лосося.",
+      "a": "her tail knocks the price tag round so its digits face the lens and jump"
+    },
+    {
+      "t": "2.45-3.05",
+      "c": "wide",
+      "a": "the recoil carries her a body length past the salmon head, whose own spine is already bare; she does not look"
+    },
+    {
+      "t": "3.05-3.55",
+      "c": "mid",
+      "line": "Теперь",
+      "a": "a slower pass with her tiny pectoral fin held out in front"
+    },
+    {
+      "t": "3.55-4.05",
+      "c": "close",
+      "line": "моя",
+      "a": "she jabs the fin at herself, cannot reach, bends her whole body into an arc"
+    },
+    {
+      "t": "4.05-4.75",
+      "c": "mid",
+      "line": "очередь",
+      "a": "she holds the arc, shuddering with effort, glare flashing off her flank"
+    },
+    {
+      "t": "4.75-5.25",
+      "c": "close",
+      "line": "блистать.",
+      "a": "she rolls her side flat to the roof glass and it flares white"
+    },
+    {
+      "t": "5.25-5.95",
+      "c": "mid",
+      "a": "the digits jump again; she takes it for applause and arches harder"
+    },
+    {
+      "t": "5.95-6.55",
+      "c": "wide",
+      "a": "a blue glove tips a shovel of ice over her from above, burying her to mid body, and leaves"
+    },
+    {
+      "t": "6.55-7.25",
+      "c": "mid",
+      "line": "Ты будешь",
+      "a": "she walks the runway while buried, shoving off and not moving at all"
+    },
+    {
+      "t": "7.25-7.50",
+      "c": "wide",
+      "line": "рад",
+      "a": "she bursts up out of the ice"
+    },
+    {
+      "t": "7.50-8.00",
+      "c": "mid",
+      "line": "каждой",
+      "a": "she lands flat on her side and snaps her chin up as if it were choreography"
+    },
+    {
+      "t": "8.00-8.70",
+      "c": "mid",
+      "line": "косточке.",
+      "a": "she starts a grand turn to profile, tail pushing the ice"
+    },
+    {
+      "t": "8.70-9.30",
+      "c": "close",
+      "a": "the ice slides out, the turn carries her half a turn too far and her cut side swings into the lens and fills the frame: clean pink fillet, bare white spine"
+    },
+    {
+      "t": "9.30-10.00",
+      "c": "close",
+      "a": "she holds the star pose, chin up, not seeing it, while the glove slaps the tag onto her bare ribs and the digits jump"
+    }
   ],
-  "must_appear": "she rises out of a heap of identical fish at the start; the digit card climbs three times; at 8.70 her far side is a clean pink fillet cut with a bare white spine; she never sees it and holds the pose",
-  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, blood, gore, injury, a parked camera, a background that never moves, a closed mouth while speaking, a fin over her mouth, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, readable text, extra tails"
+  "must_appear": "she rises from a heap of identical fish; the digits jump three times; at 8.70 her cut side turns into the lens: a clean supermarket fillet and bare white spine, goods on a shelf, no wound; she never sees it",
+  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, blood, a wound, torn flesh, red raw meat, a parked camera, a background that never moves, a closed mouth while speaking, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, words, extra tails"
 }

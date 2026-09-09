@@ -2,109 +2,128 @@
   "duration_seconds": 10,
   "aspect_ratio": "9:16",
   "style": "3D cartoon, Pixar, dry satire",
-  "motion_rule": "a bird tied to her savings preaches about wings. She holds one wire all clip while the laundry flies around her. Lines run across frame, not into depth. New shot size each beat, head half the frame",
-  "character": "a slim grey turtle dove, pink breast, black neck ring, head stabbing the air each syllable",
-  "second_characters": "ONE sparrow with nothing on him: lands, preens, leaves, never reacts",
-  "props": "ONE thread from her toe up to a coin nest on the ledge above; ONE rolled banknote",
-  "prop_continuity": "the thread shows from 1.30; the banknote rides down it at 5.80 and lands on her face at 9.35",
-  "environment": "washing lines between sunlit yards at noon, sheets and pillowcases, bright open yard below",
-  "light_events": "blazing noon, sheets bouncing white light across her breast",
+  "motion_rule": "a bird tied to her savings preaches about wings. She holds one wire while the laundry flies. Lines run across frame, not into depth. Shot size changes every beat as in c",
+  "character": "a slim grey turtle dove, pink breast, black neck ring, head stabbing the air",
+  "second_characters": "ONE sparrow with nothing on him: lands, preens, leaves",
+  "props": "ONE thick dark red thread from her toe to a coin nest on the ledge; ONE rolled banknote",
+  "prop_continuity": "the red thread shows from 0.55 on; the banknote rides down it at 5.80 and onto her face at 9.35",
+  "environment": "washing lines between sunlit yards at noon, sheets and pillowcases",
+  "light_events": "blazing noon, sheets bouncing white light on her breast",
   "audio": {
     "language": "Russian, lines verbatim; latin hints never spoken",
-    "delivery": "soft cooing female voice gone hard, preaching, biting off each word, 4 syllables/sec",
+    "delivery": "soft cooing female voice gone hard, preaching, biting each word, 4 syllables/sec",
     "pronunciation": "ot-LO-zhish, CHOR-ny, pri-DYOT, CHOR-na-ya, DEN-gi, spa-SUT, TOL-ko, KRY-lya",
     "pacing": "1.30-3.15, 3.65-5.25 and 7.30-9.35 each one breath; after 9.35 not a word, sfx keep going",
-    "lip_sync": "her beak opens wide and shapes every syllable, throat swelling, never a voice over",
-    "sfx": "wind, sheets cracking, the wire humming, coins dropping one by one"
+    "lip_sync": "her beak opens wide and shapes every syllable, throat swelling",
+    "sfx": "wind, sheets cracking, the wire humming, coins dropping"
   },
   "timeline": [
     {
       "t": "0.00-0.55",
-      "a": "a gust rips a sheet off its pegs and throws her off the wire; her wings snap open by reflex"
+      "c": "wide",
+      "a": "a gust rips a sheet off and throws her off the wire; her wings snap open by reflex"
     },
     {
       "t": "0.55-1.30",
-      "a": "she drops back, locks her toes, folds her wings away and pulls the thread tight with her beak"
+      "c": "close",
+      "a": "she drops back and hauls the red thread tight with her beak, knotting it to her toe"
     },
     {
       "t": "1.30-2.05",
+      "c": "close",
       "line": "Отложишь",
-      "a": "she loops the thread round her toe again and tightens the knot with her beak"
+      "a": "she loops the red thread round her toe again and pulls the knot hard"
     },
     {
       "t": "2.05-2.80",
+      "c": "mid",
       "line": "на чёрный",
-      "a": "a test tug with her foot slides the coin nest toward the ledge edge"
+      "a": "a test tug slides the coin nest along the ledge toward the edge"
     },
     {
       "t": "2.80-3.15",
+      "c": "close",
       "line": "день.",
-      "a": "she puffs her throat out and holds it, chin high"
+      "a": "she puffs her throat out and holds it"
     },
     {
       "t": "3.15-3.65",
-      "a": "the wire bounces from her own tug; a wing shoots out for balance and folds as if planned"
+      "c": "wide",
+      "a": "a pillowcase fills with wind behind her and bangs"
     },
     {
       "t": "3.65-4.20",
+      "c": "mid",
       "line": "Придёт",
-      "a": "her body stays carved still, only the head stabbing the air"
+      "a": "the sparrow drops on the wire, it sags, and she catches her balance mid word"
     },
     {
       "t": "4.20-4.90",
+      "c": "wide",
       "line": "чёрная",
-      "a": "the wind lifts her nape into a ridiculous crest she knows nothing about"
+      "a": "a loose sheet sweeps behind her; the wind lifts her nape into a crest"
     },
     {
       "t": "4.90-5.25",
+      "c": "close",
       "line": "ночь.",
       "a": "she turns her head sharp to profile and holds a prophet pause"
     },
     {
       "t": "5.25-5.80",
-      "a": "the sparrow drops onto the wire; it sags deep and she notices only on the second swing"
+      "c": "wide",
+      "a": "a towel tears off the line and goes across the yard"
     },
     {
       "t": "5.80-6.35",
-      "a": "without leaving her pose she tugs the thread and a rolled banknote slides down it into her foot"
+      "c": "close",
+      "a": "without leaving her pose she tugs the thread and a rolled banknote slides into her foot"
     },
     {
       "t": "6.35-6.90",
-      "a": "she pushes the banknote under her breast feathers and settles on it like an egg"
+      "c": "mid",
+      "a": "she pushes the banknote under her breast feathers and sits on it like an egg"
     },
     {
       "t": "6.90-7.30",
-      "a": "she looks into the lens and says nothing, one toe quietly drawing the thread tighter"
+      "c": "close",
+      "a": "she looks into the lens and says nothing, one toe drawing the thread tighter"
     },
     {
       "t": "7.30-7.75",
+      "c": "mid",
       "line": "Деньги",
-      "a": "she squares her shoulders, throat swollen to the limit"
+      "a": "she squares her shoulders, throat swollen"
     },
     {
       "t": "7.75-8.45",
+      "c": "wide",
       "line": "не спасут,",
       "a": "the sparrow preens a feather and does not look up"
     },
     {
       "t": "8.45-8.90",
+      "c": "mid",
       "line": "только",
       "a": "she rises on her toes, wings half lifting"
     },
     {
       "t": "8.90-9.35",
+      "c": "wide",
       "line": "крылья.",
       "a": "she throws both wings wide and pushes off; the nest slides off the ledge"
     },
     {
       "t": "9.35-9.75",
-      "a": "the thread flips her upside down under the wire, wings still spread in the noble gesture, toe gripping it, eyes furious, the banknote landing on her face"
+      "c": "close",
+      "a": "the thread snaps her upside down: toe still hooked over the wire, wings beating hard, neck arching up at her own foot, beak snapping, the banknote landing on her face"
     },
     {
       "t": "9.75-10.00",
-      "a": "the sparrow perches on her upturned foot, preens and kicks off, leaving her spinning; coins drip from the nest one by one"
+      "c": "mid",
+      "a": "the nest swings on the same thread facing her, dripping coins into the yard, while she snaps at the sparrow and misses"
     }
   ],
-  "must_appear": "the thread runs from her toe to the nest all clip and her own tugs slide it to the edge; at 9.35 she hangs upside down alive and furious, wings spread; coins leave one at a time",
-  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, a dead bird, a thread on her neck, closed eyes, a parked camera, a background that never moves, a closed beak while speaking, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, readable text"
+  "must_appear": "the red thread runs from her toe to the nest all clip and her own tugs slide it to the edge; at 9.35 she hangs upside down beating her wings and snapping, alive and furious; coins leave one at a time",
+  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, a dead bird, a limp bird, wings hanging loose, a bird hanging motionless, a thread on her neck, a parked camera, a closed beak while speaking, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, words"
 }
