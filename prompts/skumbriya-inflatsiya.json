@@ -1,0 +1,40 @@
+{
+  "duration_seconds": 10,
+  "aspect_ratio": "9:16",
+  "style": "3D cartoon, Pixar, dry satire",
+  "motion_rule": "she drives along the ice counter all clip while the market flies into her: tags and the gull come at the lens every beat and burst on her flank; the camera tracks alongside, counters sweeping past, her face to the lens; her head half the frame; new shot size each beat, one action per beat; tall frame filled, no bars",
+  "character": "a glossy blue-green mackerel with hard silver flanks and a proud jaw, mouth clear of her fins",
+  "second_characters": "ONE gull vendor working the lens, big in frame, slapping tags onto her flank",
+  "props": "ONE gold tag hooked in her gill from the first beat; A SWARM of paper tags building a drift along her back",
+  "prop_continuity": "the gold tag stays in her gill until 7.60; the drift grows to 8.15, tags flying off on the way, then off at once",
+  "environment": "a fish market aisle at noon, tiled counters and crate towers to the roof both sides a fin away, no far wall",
+  "light_events": "sun between the crates whips bright bars across her jaw every beat, cold rim one side, warm kick the other",
+  "audio": {
+    "language": "Russian, lines verbatim; latin hints never spoken",
+    "delivery": "smooth oily female voice, matter-of-fact, biting off each word, 3.6 syllables/sec",
+    "pronunciation": "pro-SHLI, vre-me-NA, lo-so-SYA, te-PER, mo-YA, O-che-red, blis-TAT, KAZH-doy, KOS-toch-ke",
+    "pacing": "0.45-2.65, 3.35-5.85 and 6.50-9.00 each one breath; after 9.00 not a word, sfx keep going",
+    "lip_sync": "her jaw drops wide and her lips shape every syllable, gills alive, mouth clear of fins and props, never a voice over",
+    "sfx": "market hum, crate lids, paper slapping scales, the drift thumping at 8.15"
+  },
+  "timeline": [
+    {"t": "0.00-0.45", "a": "she drives onto the ice counter, drift on her back, gold tag in her gill"},
+    {"t": "0.45-1.00", "line": "Прошли", "a": "she drives her jaw through a wall of tags flying at the lens; they plaster her flank, mouth clear"},
+    {"t": "1.00-1.80", "line": "времена", "a": "she swings her body and takes a crate lid open across her back, never breaking stride"},
+    {"t": "1.80-2.65", "line": "лосося.", "a": "she hauls her flank along the counter, raking a sheaf of tags onto her scales"},
+    {"t": "2.65-3.35", "a": "the gull sprints across the lens firing tags into her scales as she drives on"},
+    {"t": "3.35-3.90", "line": "Теперь", "a": "she cuts hard across the ice to the far counter, jaw to the lens, the drift shedding tags past it"},
+    {"t": "3.90-4.45", "line": "моя", "a": "she drives on and shrugs one flank clean, tags peeling off past the lens"},
+    {"t": "4.45-5.25", "line": "очередь", "a": "she bodies a crate stack open, driving down the row"},
+    {"t": "5.25-5.85", "line": "блистать.", "a": "she rolls her flank flat to the sun and it flares white across the lens"},
+    {"t": "5.85-6.50", "a": "she hooks the gold tag out of her gill on a fin tip, tags streaming off past the lens"},
+    {"t": "6.50-7.30", "line": "Ты будешь", "a": "she drives her jaw at the lens, the gold tag showing through the scales"},
+    {"t": "7.30-7.60", "line": "рад", "a": "she rips the gold tag out and waves it past the lens beside her mouth"},
+    {"t": "7.60-8.15", "line": "каждой", "a": "she shoulders the gull off and it tumbles across the lens with tags"},
+    {"t": "8.15-9.00", "line": "косточке.", "a": "she shakes her whole body out and the entire drift lifts off her into the lens"},
+    {"t": "9.00-9.50", "a": "she drives through the falling paper, her flank thin and bare to the bones"},
+    {"t": "9.50-10.00", "a": "she flicks the gold tag off her fin into the lens, face to it, and drives on"}
+  ],
+  "must_appear": "one gold tag in her gill from the start; the drift growing on her back; at 8.15 it lifts off and her flank is thin and bare to the bones; at 9.50 she flicks the gold tag into the lens",
+  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, a parked camera, a background that never moves, a held pose, a closed mouth while speaking, a fin over her mouth, a prop against her mouth, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, readable text, extra tails"
+}

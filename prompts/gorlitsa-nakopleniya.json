@@ -1,0 +1,39 @@
+{
+  "duration_seconds": 10,
+  "aspect_ratio": "9:16",
+  "style": "3D cartoon, Pixar, dry satire",
+  "motion_rule": "she drives down the box hall all clip while the coins fly into her: coins and the sparrow come at the lens every beat and burst on her back; the camera tracks alongside, box rows sweeping past, her face to the lens; her head half the frame; new shot size each beat, one action per beat; tall frame filled, no bars",
+  "character": "a slim grey turtle dove with a pink breast and a black neck ring, beak clear of her wings",
+  "second_characters": "ONE sparrow clerk working the lens, big in frame, stamping receipts onto her back",
+  "props": "ONE brass key tied to her leg from the first beat; A SWARM of coins building a load on her back",
+  "prop_continuity": "the key stays on her leg until 6.30; the load grows to 8.25, coins spilling off on the way, then off at once",
+  "environment": "a safe-box hall at noon, brass deposit doors in rows to the roof both sides a wing away, no far wall",
+  "light_events": "sun through the roof glass whips bright bars across her breast every beat, cold rim one side, warm kick the other",
+  "audio": {
+    "language": "Russian, lines verbatim; latin hints never spoken",
+    "delivery": "soft cooing female voice turning hard, matter-of-fact, biting off each word, 3.6 syllables/sec",
+    "pronunciation": "ot-LO-zhish, CHOR-ny, pri-DYOT, CHOR-na-ya, DEN-gi, spa-SUT, TOL-ko, KRY-lya",
+    "pacing": "0.45-2.40, 3.20-4.90 and 5.75-8.25 each one breath; after 8.25 not a word, sfx keep going",
+    "lip_sync": "her beak opens wide and shapes every syllable, throat and brows alive, beak clear of wings and props, never a voice over",
+    "sfx": "hall echo, box doors, coins slapping feathers, the load thumping at 8.25"
+  },
+  "timeline": [
+    {"t": "0.00-0.45", "a": "she drives into the box hall, load on her back, brass key on her leg"},
+    {"t": "0.45-1.25", "line": "Отложишь", "a": "she drives her breast through a wall of coins flying at the lens; they plaster her back, beak clear"},
+    {"t": "1.25-2.05", "line": "на чёрный", "a": "she swings her wing and takes a box door open across it, never breaking stride"},
+    {"t": "2.05-2.40", "line": "день.", "a": "she slams her breast to the lens, the load shedding coins past it"},
+    {"t": "2.40-3.20", "a": "the sparrow sprints across the lens stamping receipts onto her back as she drives on"},
+    {"t": "3.20-3.75", "line": "Придёт", "a": "she cuts hard across the hall to the far boxes, beak to the lens"},
+    {"t": "3.75-4.55", "line": "чёрная", "a": "she hauls her wing along the box row, raking a sheaf of coins onto her back"},
+    {"t": "4.55-4.90", "line": "ночь.", "a": "she bodies a box bank open, driving down the row"},
+    {"t": "4.90-5.75", "a": "she hooks the brass key off her leg on a claw tip, coins streaming off past the lens"},
+    {"t": "5.75-6.30", "line": "Деньги", "a": "she drives her breast at the lens, the key showing through the feathers"},
+    {"t": "6.30-7.10", "line": "не спасут,", "a": "she rips the key out and waves it past the lens beside her beak"},
+    {"t": "7.10-7.65", "line": "только", "a": "she shoulders the sparrow off and it tumbles across the lens with coins"},
+    {"t": "7.65-8.25", "line": "крылья.", "a": "she throws both wings wide and they fill the frame edge to edge"},
+    {"t": "8.25-9.10", "a": "she shakes her whole body out and the entire load pours off her into the lens"},
+    {"t": "9.10-10.00", "a": "she drives on beating both wings, her back bare, and flicks the key into the lens"}
+  ],
+  "must_appear": "one brass key on her leg from the start; the load growing on her back; at 7.65 both wings fill the frame edge to edge; at 8.25 the load pours off and her back is bare; at 9.10 she flicks the key into the lens",
+  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, a parked camera, a background that never moves, a held pose, a closed beak while speaking, a wing over her beak, a prop against her beak, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, readable text, extra beaks"
+}
