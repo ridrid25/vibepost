@@ -5,9 +5,11 @@
 //    Шаги цепочек в статусе paused не выбираются.
 // 2. Отправка через send-post с общим троттлингом: пауза между отправками,
 //    не больше 19 сообщений в один чат за прогон (лимит Telegram ~20/мин).
-// 3. Успех → sent + tg_message_id + строка в post_analytics.
+// 3. Успех → квитанция в post_analytics, затем sent + tg_message_id.
+//    Запись статуса с проверкой ошибки и повтором: молча терять её нельзя.
 //    Сеть/429/5xx → до 3 попыток; 4xx логики → сразу failed.
 // 4. Цепочки, у которых не осталось необработанных шагов, получают done.
+// 5. Каждый failed → вызов notify-error (запись в notifications + личный TG).
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { sendPost, type PostContent, type SendResult } from "./send-post.ts";
 
@@ -67,6 +69,26 @@ interface QueueItem {
   retry_count: number;
   content: PostContent;
   post_id?: string; // только у постов — для post_analytics
+}
+
+// Запись статуса — единственное место, где потерянный ответ означает молчаливо
+// зависший пост: 10.09.2026 PostgREST вернул 504 на этот PATCH, ошибку никто не
+// проверял, и пост навсегда остался в processing — при том что сообщение ушло.
+// Поэтому здесь ошибку проверяем и повторяем, а окончательный провал пишем в лог.
+async function writeStatus(
+  // deno-lint-ignore no-explicit-any
+  admin: any,
+  tableName: string,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error } = await admin.from(tableName).update(patch).eq("id", id);
+    if (!error) return true;
+    if (attempt < 2) await sleep(400 * (attempt + 1));
+    else console.error(`Статус не записан: ${tableName} ${id} — ${error.message}`);
+  }
+  return false;
 }
 
 // Ошибка отправки → notify-error (запись в notifications + личный Telegram).
@@ -162,9 +184,7 @@ Deno.serve(async (req) => {
 
       if (!token || !tgChatId) {
         const msg = "Бот неактивен/удалён или чат не найден";
-        await admin.from(table(item))
-          .update({ status: "failed", error: msg })
-          .eq("id", item.id);
+        await writeStatus(admin, table(item), item.id, { status: "failed", error: msg });
         await notifyError(serviceKey, item, msg);
         failed++;
         continue;
@@ -172,7 +192,7 @@ Deno.serve(async (req) => {
 
       const used = perChatCount.get(item.chat_id) ?? 0;
       if (used >= PER_CHAT_LIMIT) {
-        await admin.from(table(item)).update({ status: "scheduled" }).eq("id", item.id);
+        await writeStatus(admin, table(item), item.id, { status: "scheduled" });
         rescheduled++;
         continue;
       }
@@ -181,12 +201,9 @@ Deno.serve(async (req) => {
       const res = await sendWithRetry(token, tgChatId, item.content);
 
       if (res.ok) {
-        await admin.from(table(item)).update({
-          status: "sent",
-          tg_message_id: res.messageId,
-          sent_at: new Date().toISOString(),
-          error: null,
-        }).eq("id", item.id);
+        // Квитанция пишется ДО статуса: если функция умрёт сразу после отправки,
+        // по ней recover_stuck_posts поймёт, что сообщение уже ушло, и починит
+        // статус вместо повторной публикации.
         if (res.messageId) {
           await admin.from("post_analytics").upsert(
             {
@@ -198,20 +215,26 @@ Deno.serve(async (req) => {
             { onConflict: "chat_id,tg_message_id", ignoreDuplicates: true },
           );
         }
+        await writeStatus(admin, table(item), item.id, {
+          status: "sent",
+          tg_message_id: res.messageId,
+          sent_at: new Date().toISOString(),
+          error: null,
+        });
         sent++;
       } else if (res.retryable && item.retry_count + 1 < MAX_RETRIES) {
-        await admin.from(table(item)).update({
+        await writeStatus(admin, table(item), item.id, {
           status: "scheduled",
           retry_count: item.retry_count + 1,
           error: res.error,
-        }).eq("id", item.id);
+        });
         rescheduled++;
       } else {
-        await admin.from(table(item)).update({
+        await writeStatus(admin, table(item), item.id, {
           status: "failed",
           error: res.error,
           retry_count: item.retry_count + (res.retryable ? 1 : 0),
-        }).eq("id", item.id);
+        });
         const what = item.kind === "post" ? "Пост" : "Шаг цепочки";
         const preview = (item.content.text ?? item.content.poll_question ?? "").slice(0, 80);
         await notifyError(

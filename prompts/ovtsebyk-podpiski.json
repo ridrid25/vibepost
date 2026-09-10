@@ -1,0 +1,117 @@
+{
+  "duration_seconds": 10,
+  "aspect_ratio": "9:16",
+  "style": "3D cartoon, Pixar, dry satire",
+  "motion_rule": "a wild animal grazes on subscriptions and never learns who is charging him. He stands in one spot; paper drives across frame instead. Shot size changes every beat as in c",
+  "character": "a shaggy musk ox, heavy skirt of hair swinging late behind him, slow single blinks, jaw grinding sideways",
+  "second_characters": "ONE lemming, calm and clerical, planting a card every time he blinks; at the end it walks onto his nose at the lens",
+  "props": "ONE gold card in the corner of his mouth from 1.80; A DRIFT of cards and receipt tape blowing across frame",
+  "prop_continuity": "cards only ever increase on him; he swallows the gold card at 8.20",
+  "environment": "open sunlit tundra at noon, blinding flat snow to the horizon",
+  "light_events": "blinding noon off the snow, hard white bounce under his jaw",
+  "audio": {
+    "language": "Russian, lines verbatim; latin hints never spoken",
+    "delivery": "deep chesty male voice, calm and well fed, no complaint, biting each word, 3.6 syllables/sec",
+    "pronunciation": "pod-PEE-sok, TSE-ly, sug-ROP, ZNA-yu, da-YUT, pla-CHU — stress CHU, he pays, not weeping",
+    "pacing": "1.80-4.60, 5.70-7.30 and 7.30-8.20 each one breath; after 8.20 not a word, sfx keep going",
+    "lip_sync": "his jaw drops wide and shapes every syllable around the card, never a voice over",
+    "sfx": "wind, crust breaking, plastic crunching, a swallow, three taps"
+  },
+  "timeline": [
+    {
+      "t": "0.00-0.60",
+      "c": "wide",
+      "a": "his hoof punches through the crust, throwing a fan of snow and paper; only the leg works"
+    },
+    {
+      "t": "0.60-1.15",
+      "c": "close",
+      "a": "his muzzle goes into the hole to the eyes and ploughs sideways, exactly like an ox after lichen"
+    },
+    {
+      "t": "1.15-1.80",
+      "c": "close",
+      "a": "he pulls his muzzle out with a fan of cards in his lips; behind his ear a lemming is already busy"
+    },
+    {
+      "t": "1.80-2.65",
+      "c": "mid",
+      "line": "Подписок",
+      "a": "he chews, jaw circling, plastic cracking, one gold card left sticking out of his mouth"
+    },
+    {
+      "t": "2.65-3.50",
+      "c": "wide",
+      "line": "у меня",
+      "a": "receipts skid past his hooves as his heavy skirt of hair swings after him, late"
+    },
+    {
+      "t": "3.50-4.05",
+      "c": "mid",
+      "line": "целый",
+      "a": "he punches the crust again out of habit, not meaning to eat"
+    },
+    {
+      "t": "4.05-4.60",
+      "c": "wide",
+      "line": "сугроб.",
+      "a": "the crust gives, his leg drops to the knee and he hauls it out, the mountain rocking"
+    },
+    {
+      "t": "4.60-5.15",
+      "c": "mid",
+      "a": "he swallows, the lump going down his throat, while cards blow past him"
+    },
+    {
+      "t": "5.15-5.70",
+      "c": "close",
+      "a": "he blinks once, slowly; the lemming plants a card in his fur and his ear twitches after"
+    },
+    {
+      "t": "5.70-6.50",
+      "c": "wide",
+      "line": "Не знаю,",
+      "a": "he swings his muzzle sideways, receipt tape frozen in his beard unrolling two metres"
+    },
+    {
+      "t": "6.50-7.30",
+      "c": "close",
+      "line": "что дают,",
+      "a": "the gold card travels to the other corner of his mouth while he chews"
+    },
+    {
+      "t": "7.30-7.65",
+      "c": "mid",
+      "line": "но",
+      "a": "he keeps chewing without a trace of complaint"
+    },
+    {
+      "t": "7.65-8.20",
+      "c": "close",
+      "line": "плачу.",
+      "a": "he blinks again and the lemming plants a second card, patting it flat"
+    },
+    {
+      "t": "8.20-8.55",
+      "c": "close",
+      "a": "he swallows the gold card, his throat working it down"
+    },
+    {
+      "t": "8.55-9.05",
+      "c": "mid",
+      "a": "he twists his muzzle to his shoulder and tears one card out of his fur with his teeth"
+    },
+    {
+      "t": "9.05-9.35",
+      "c": "wide",
+      "a": "he spits it away on the wind and lifts his head, chest out"
+    },
+    {
+      "t": "9.35-10.00",
+      "c": "close",
+      "a": "the lemming walks down onto the bridge of his nose, huge at the lens, and plants three cards in a row, tap, tap, tap; he does not turn"
+    }
+  ],
+  "must_appear": "what he digs out is cards and receipts, not lichen; he swallows them; the lemming is on him from 1.15 and plants a card on every blink; at 9.35 it fills the lens on his nose and plants three",
+  "negative_prompt": "subtitles, watermark, letterbox, night, dark scene, a suffering animal, blood, injury, a parked camera, a background that never moves, a walking hero, a closed muzzle while speaking, a hoof over his mouth, slow motion, a camera pulling back, a foreign accent, a word not in the lines, cyrillic letters, words"
+}
