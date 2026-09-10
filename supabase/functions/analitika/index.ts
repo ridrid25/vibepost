@@ -15,6 +15,7 @@
 //      что разбор сделан. По этой записи suggest-ideas утром проверяет,
 //      жив ли мозг, и зовёт заказчицу в бот, если разбора нет.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { refreshAccessToken } from "../_shared/youtube-oauth.ts";
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -180,39 +181,113 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
 }
 
 /**
- * ТикТок — второй и более честный источник: там просмотры расходятся от нуля
- * до тысячи, а на YouTube почти все ролики лежат на пятнадцати. Берём
- * последний снимок по каждому ролику и разбираем описание по темам.
+ * ТикТок — главный источник: там просмотры расходятся от нуля до тысячи, а на
+ * YouTube почти все ролики лежат на пятнадцати. Берём свежий снимок каждого
+ * ролика и режем по всем признакам, какие отдаёт их API: тема, длина, час и
+ * день выхода, доля репостов и доля лайков.
+ *
+ * Репосты здесь важнее лайков: именно они разгоняют ролик по чужим лентам.
+ * Поэтому смотрим не только «сколько получилось», но и с какого уровня
+ * репостов ролик начинает набирать.
  */
-async function тиктокПоТемам(admin: SupabaseClient, uid: string) {
-  const { data } = await admin.from("tiktok_raw_video_items")
-    .select("external_video_id, raw_payload, captured_at")
-    .eq("user_id", uid).order("captured_at", { ascending: false }).limit(4000);
+async function тиктокРазбор(admin: SupabaseClient, uid: string) {
+  // Тянем не весь raw_payload: там лежит embed_html, и на паре тысяч строк
+  // функция падала с Internal Server Error. Берём только нужные поля.
+  const { data, error } = await admin.from("tiktok_raw_video_items")
+    .select("external_video_id, view_count:raw_payload->>view_count, " +
+      "like_count:raw_payload->>like_count, share_count:raw_payload->>share_count, " +
+      "comment_count:raw_payload->>comment_count, create_time:raw_payload->>create_time, " +
+      "duration:raw_payload->>duration, title:raw_payload->>title, " +
+      "video_description:raw_payload->>video_description")
+    .eq("user_id", uid).order("captured_at", { ascending: false }).limit(3000);
+  if (error) throw new Error(`тикток: ${error.message}`);
   if (!data?.length) return null;
 
   const свежие = new Map<string, Record<string, unknown>>();
   for (const строка of data) {
-    const id = String(строка.external_video_id);
-    if (!свежие.has(id)) свежие.set(id, строка.raw_payload as Record<string, unknown>);
+    const id = String((строка as unknown as Record<string, unknown>).external_video_id);
+    if (!свежие.has(id)) свежие.set(id, строка as unknown as Record<string, unknown>);
   }
-  const ролики = [...свежие.values()].map((p) => ({
-    views: Number(p.view_count ?? 0),
-    likes: Number(p.like_count ?? 0),
-    текст: String(p.title ?? p.video_description ?? ""),
-  })).filter((р) => р.текст);
-  if (ролики.length < 6) return null;
 
-  const группы = new Map<string, number[]>();
-  for (const р of ролики) {
-    const t = темаТекста(р.текст);
-    if (!группы.has(t)) группы.set(t, []);
-    группы.get(t)!.push(р.views);
-  }
-  const строки = [...группы.entries()]
-    .filter(([, v]) => v.length >= 3)
-    .map(([тема, v]) => ({ тема, n: v.length, медиана: Math.round(медиана(v)) }))
-    .sort((a, b) => b.медиана - a.медиана);
-  return { всего: ролики.length, строки };
+  const ролики = [...свежие.values()].map((p) => {
+    const views = Number(p.view_count ?? 0);
+    const вышел = new Date(Number(p.create_time ?? 0) * 1000);
+    const мск = new Date(вышел.getTime() + 3 * 3600_000);
+    return {
+      views,
+      likes: Number(p.like_count ?? 0),
+      shares: Number(p.share_count ?? 0),
+      comments: Number(p.comment_count ?? 0),
+      длина: Number(p.duration ?? 0),
+      час: мск.getUTCHours(),
+      день: ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][мск.getUTCDay()],
+      текст: String(p.title ?? p.video_description ?? ""),
+    };
+  }).filter((р) => р.views > 0);
+
+  if (ролики.length < 8) return null;
+
+  const доля = (часть: number, целое: number) => (целое ? часть / целое : 0);
+
+  /**
+   * По каждой группе меряем три вещи: сколько посмотрели, сколько из
+   * посмотревших лайкнули и сколько переслали. Просмотры говорят, донесла ли
+   * лента, а лайки и репосты — попала ли шутка: их доля от просмотров почти
+   * не зависит от того, повезло ролику с лентой или нет.
+   *
+   * Бинов по самой доле лайков не делаем: у ролика с тысячей просмотров доля
+   * всегда ниже, чем у ролика с десятью, и вывод выходит вывернутым наизнанку
+   * — «снимай так, чтобы лайкали пореже». 10.09.2026 такой вывод уже попал в
+   * память завода, пришлось стирать.
+   */
+  const режем = (
+    имя: string,
+    ключ: (р: (typeof ролики)[number]) => string | null,
+  ) => {
+    const группы = new Map<string, (typeof ролики)>();
+    for (const р of ролики) {
+      const k = ключ(р);
+      if (!k) continue;
+      if (!группы.has(k)) группы.set(k, []);
+      группы.get(k)!.push(р);
+    }
+    const строки = [...группы.entries()]
+      .filter(([, v]) => v.length >= 3)
+      .map(([значение, v]) => {
+        // Долю считаем только по роликам, которые видели хотя бы полсотни раз.
+        // На ролике с четырьмя просмотрами один лайк даёт «25% зрителей в
+        // восторге» — и завод уходит снимать провальную тему.
+        const заметные = v.filter((р) => р.views >= 50);
+        const хватает = заметные.length >= 3;
+        return {
+          значение,
+          n: v.length,
+          медиана: Math.round(медиана(v.map((р) => р.views))),
+          доля_на: заметные.length,
+          лайков_процент: хватает
+            ? Math.round(медиана(заметные.map((р) => доля(р.likes, р.views))) * 1000) / 10
+            : -1,
+          репостов_процент: хватает
+            ? Math.round(медиана(заметные.map((р) => доля(р.shares, р.views))) * 1000) / 10
+            : -1,
+          секунд: Math.round(медиана(v.map((р) => р.длина))),
+        };
+      })
+      .sort((a, b) => b.медиана - a.медиана);
+    return { имя, строки };
+  };
+
+  return {
+    всего: ролики.length,
+    репостов_всего: ролики.reduce((с, р) => с + р.shares, 0),
+    срезы: [
+      режем("Тема", (р) => темаТекста(р.текст)),
+      режем("Длина ролика", (р) =>
+        р.длина <= 0 ? null : р.длина <= 10 ? "до 10 секунд" : р.длина <= 15 ? "11-15 секунд" : "16 секунд и длиннее"),
+      режем("Час выхода в ТикТоке", (р) => `${String(р.час).padStart(2, "0")}:00`),
+      режем("День недели", (р) => р.день),
+    ].filter((с) => с.строки.length >= 2),
+  };
 }
 
 /**
@@ -268,6 +343,78 @@ async function тегиТиктока(admin: SupabaseClient) {
   }));
 }
 
+/** «1 репост», «2 репоста», «5 репостов» — иначе отчёт читается как машинный. */
+function склонить(n: number, одна: string, две: string, пять: string): string {
+  const с = Math.abs(n) % 100;
+  const е = с % 10;
+  if (с > 10 && с < 20) return `${n} ${пять}`;
+  if (е > 1 && е < 5) return `${n} ${две}`;
+  if (е === 1) return `${n} ${одна}`;
+  return `${n} ${пять}`;
+}
+
+/**
+ * Шортсы крутятся по кругу, поэтому досмотр бывает больше ста процентов:
+ * 180% значит, что ролик в среднем посмотрели почти дважды. Пишем это
+ * словами, иначе «досмотрели на 179% длины» читается как ошибка.
+ */
+function досмотрСловами(п: number): string {
+  return п >= 115
+    ? `пересматривают по кругу ${(п / 100).toFixed(1)} раза`
+    : п >= 90 ? "досматривают до конца" : `досматривают ${п}% длины`;
+}
+
+/**
+ * Досмотр. Ни ТикТок, ни обычный YouTube Data API его не отдают — только
+ * YouTube Analytics по своему каналу: там на каждый ролик есть, какую долю
+ * длины зритель просмотрел, сколько переслал и сколько подписалось.
+ *
+ * Это единственная метрика, которая говорит про сам ролик, а не про ленту:
+ * просмотры зависят от того, кому лента его показала, а досмотр — только от
+ * того, дослушали ли шутку.
+ */
+async function досмотрЮтуба(admin: SupabaseClient, uid: string) {
+  const { data: аккаунт } = await admin.from("youtube_accounts")
+    .select("id").eq("user_id", uid).eq("auth_status", "active").limit(1).maybeSingle();
+  if (!аккаунт) return null;
+
+  let токен: string;
+  try {
+    const { data: bundleRaw } = await admin.rpc("get_youtube_token_bundle", { p_account_id: аккаунт.id });
+    const bundle = JSON.parse(String(bundleRaw ?? "{}"));
+    if (!bundle.refresh_token) return null;
+    const t = await refreshAccessToken({
+      clientId: Deno.env.get("YOUTUBE_OAUTH_CLIENT_ID")!,
+      clientSecret: Deno.env.get("YOUTUBE_OAUTH_CLIENT_SECRET")!,
+      refreshToken: bundle.refresh_token,
+    });
+    токен = t.access_token;
+  } catch { return null; }
+
+  const с = new Date(Date.now() - 90 * 86400_000).toISOString().slice(0, 10);
+  const по = new Date().toISOString().slice(0, 10);
+  const адрес = "https://youtubeanalytics.googleapis.com/v2/reports" +
+    `?ids=channel%3D%3DMINE&startDate=${с}&endDate=${по}&dimensions=video` +
+    "&metrics=views,averageViewPercentage,averageViewDuration,likes,shares,comments,subscribersGained" +
+    "&sort=-views&maxResults=200";
+  const ответ = await fetch(адрес, { headers: { Authorization: `Bearer ${токен}` } });
+  if (!ответ.ok) return null;
+  const j = await ответ.json();
+  const строки = (j?.rows ?? []) as Array<Array<string | number>>;
+  if (строки.length < 4) return null;
+
+  return строки.map((r) => ({
+    youtube_id: String(r[0]),
+    просмотров: Number(r[1] ?? 0),
+    досмотр: Number(r[2] ?? 0),
+    секунд: Number(r[3] ?? 0),
+    лайков: Number(r[4] ?? 0),
+    репостов: Number(r[5] ?? 0),
+    комментариев: Number(r[6] ?? 0),
+    подписалось: Number(r[7] ?? 0),
+  }));
+}
+
 Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   if (req.method !== "POST") return json(405, { error: "POST only" });
@@ -302,17 +449,119 @@ Deno.serve(async (req) => {
     выводы.push({ lesson: избегаем, category: "FAILED_PATTERN", status: "REJECTED", evidence: [факты] });
   };
   const общаяМедиана = Math.round(медиана(ролики.map((р) => р.views)));
+  let тиктокРоликов = 0;
 
-  const тикток = await тиктокПоТемам(admin, uid);
-  if (тикток && тикток.строки.length >= 2) {
-    const л = тикток.строки[0];
-    const х = тикток.строки[тикток.строки.length - 1];
-    if (л.медиана >= х.медиана * 1.8) {
-      пара(
-        `Тема «${л.тема}»: в ТикТоке медиана ${л.медиана} просмотров на ${л.n} роликах, лучшая тема канала.`,
-        `Тема «${х.тема}»: в ТикТоке медиана ${х.медиана} на ${х.n} роликах, не брать.`,
-        { источник: "tiktok", строки: тикток.строки, всего: тикток.всего },
-      );
+  const тикток = await тиктокРазбор(admin, uid);
+  тиктокРоликов = тикток?.всего ?? 0;
+  if (тикток) {
+    for (const срез of тикток.срезы) {
+      const общий = { источник: "tiktok", срез: срез.имя, строки: срез.строки, всего: тикток.всего };
+
+      // 1. Просмотры: донесла ли лента.
+      const л = срез.строки[0];
+      const х = срез.строки[срез.строки.length - 1];
+      if (л.медиана >= х.медиана * 1.8) {
+        пара(
+          `${срез.имя} «${л.значение}»: в ТикТоке медиана ${л.медиана} просмотров на ${л.n} роликах.`,
+          `${срез.имя} «${х.значение}»: медиана ${х.медиана} на ${х.n} роликах, не брать.`,
+          общий,
+        );
+      }
+
+      // 2. Лайки: попала ли шутка. Считаем от просмотров, поэтому ролику с
+      // маленьким охватом это не даёт форы.
+      const счётные = срез.строки.filter((с) => с.лайков_процент >= 0);
+      const поЛайкам = [...счётные].sort((a, b) => b.лайков_процент - a.лайков_процент);
+      const лл = поЛайкам[0];
+      const лх = поЛайкам[поЛайкам.length - 1];
+      if (поЛайкам.length >= 2 && лл.лайков_процент >= 1 && лл.лайков_процент >= лх.лайков_процент * 2) {
+        пара(
+          `${срез.имя} «${лл.значение}»: лайк ставят ${лл.лайков_процент}% посмотревших — шутка попадает.`,
+          `${срез.имя} «${лх.значение}»: лайк ставят ${лх.лайков_процент}% — зритель досматривает молча.`,
+          общий,
+        );
+      }
+
+      // 3. Репосты: пересылают ли друзьям. Именно они разгоняют ролик по
+      // чужим лентам, поэтому смотрим отдельно от лайков — но только когда
+      // репосты вообще есть, иначе сравниваем ноль с нулём.
+      if (тикток.репостов_всего >= 10) {
+        const поРепостам = [...счётные].sort((a, b) => b.репостов_процент - a.репостов_процент);
+        const рл = поРепостам[0];
+        const рх = поРепостам[поРепостам.length - 1];
+        if (поРепостам.length >= 2 && рл.репостов_процент >= 0.3 && рл.репостов_процент >= рх.репостов_процент * 2) {
+          пара(
+            `${срез.имя} «${рл.значение}»: пересылают ${рл.репостов_процент}% посмотревших — этим делятся.`,
+            `${срез.имя} «${рх.значение}»: пересылают ${рх.репостов_процент}%, ролик дальше своей ленты не уходит.`,
+            общий,
+          );
+        }
+      }
+    }
+  }
+
+  // Досмотр, репосты и подписки — по своему каналу через YouTube Analytics.
+  // Просмотры говорят про ленту, эти три — про сам ролик.
+  const досмотр = await досмотрЮтуба(admin, uid);
+  if (досмотр) {
+    const поId = new Map(ролики.map((р) => [р.youtube_id, р]));
+    const сНашими = досмотр
+      .map((д) => ({ ...д, наш: поId.get(д.youtube_id) }))
+      .filter((д) => д.наш && д.просмотров >= 20);
+
+    if (сНашими.length >= 6) {
+      const срезДосмотра = (имя: string, ключ: (н: Ролик) => string) => {
+        const группы = new Map<string, (typeof сНашими)>();
+        for (const д of сНашими) {
+          const k = ключ(д.наш!);
+          if (!группы.has(k)) группы.set(k, []);
+          группы.get(k)!.push(д);
+        }
+        return [...группы.entries()]
+          .filter(([, v]) => v.length >= 3)
+          .map(([значение, v]) => ({
+            значение,
+            n: v.length,
+            досмотр: Math.round(медиана(v.map((д) => д.досмотр))),
+            секунд: Math.round(медиана(v.map((д) => д.секунд))),
+            репостов: v.reduce((с, д) => с + д.репостов, 0),
+            подписалось: v.reduce((с, д) => с + д.подписалось, 0),
+          }))
+          .sort((a, b) => b.досмотр - a.досмотр);
+      };
+
+      for (const [имя, строки] of [
+        ["Тема", срезДосмотра("Тема", (н) => н.тема)],
+        ["Тип хука", срезДосмотра("Тип хука", (н) => н.тип_хука)],
+        ["Замер движения", срезДосмотра("Замер", (н) =>
+          н.замер == null ? "не мерян" : н.замер >= 18 ? "18 и выше" : "ниже 18")],
+      ] as Array<[string, ReturnType<typeof срезДосмотра>]>) {
+        if (строки.length < 2) continue;
+        const л = строки[0];
+        const х = строки[строки.length - 1];
+        if (л.досмотр < х.досмотр * 1.25) continue;
+        пара(
+          `${имя} «${л.значение}»: ${досмотрСловами(л.досмотр)} — ${склонить(л.n, "ролик", "ролика", "роликов")}, лучший досмотр канала.`,
+          `${имя} «${х.значение}»: досмотр ${х.досмотр}% против ${л.досмотр}% у лучших — шутку дослушивают хуже.`,
+          { источник: "youtube-analytics", признак: имя, строки },
+        );
+      }
+
+      // Репосты и подписки считаем по каналу целиком: их мало, по срезам
+      // делить нечего, но заказчице важно видеть, что ролики вообще пересылают.
+      const репостов = сНашими.reduce((с, д) => с + д.репостов, 0);
+      const подписалось = сНашими.reduce((с, д) => с + д.подписалось, 0);
+      const лучший = [...сНашими].sort((a, b) => b.репостов - a.репостов)[0];
+      выводы.push({
+        lesson: `За 90 дней на YouTube: ${склонить(репостов, "репост", "репоста", "репостов")} и ` +
+          `${склонить(подписалось, "подписка", "подписки", "подписок")} с ` +
+          `${склонить(сНашими.length, "ролика", "роликов", "роликов")}. ` +
+          `Больше всех пересылали «${лучший.наш!.title}»: ${склонить(лучший.репостов, "репост", "репоста", "репостов")}, ` +
+          `${досмотрСловами(Math.round(лучший.досмотр))}.`,
+        category: "CONFIRMED_LESSON",
+        status: "CONFIRMED",
+        evidence: [{ источник: "youtube-analytics", репостов, подписалось, роликов: сНашими.length }],
+      });
     }
   }
 
@@ -416,6 +665,7 @@ Deno.serve(async (req) => {
       взлетело: взлетевшие.length,
       медиана: общаяМедиана,
       выводов: выводы.length,
+      тикток_роликов: тиктокРоликов,
     },
     evidence: { срезы, ниши, теги, тикток: тикток ?? null },
   });
@@ -427,6 +677,7 @@ Deno.serve(async (req) => {
     роликов: ролики.length,
     взлетело: взлетевшие.length,
     выводов: выводы.length,
+    тикток_роликов: тиктокРоликов,
     отчёт,
   });
 });
