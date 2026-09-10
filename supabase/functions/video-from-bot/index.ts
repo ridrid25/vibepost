@@ -246,11 +246,9 @@ Deno.serve(async (req) => {
     const result = await admin.from("video_ideas").select(ideaSelect)
       .eq("user_id", profile.id).eq("slug", подпись).maybeSingle();
     idea = result.data;
-  } else if (profile.active_video_idea_id) {
-    const result = await admin.from("video_ideas").select(ideaSelect)
-      .eq("user_id", profile.id).eq("id", profile.active_video_idea_id).maybeSingle();
-    idea = result.data;
   }
+  // «Последнюю выбранную идею» здесь больше не берём — она залипала. Идею
+  // находим ниже, по зверю, которого разбор увидел в присланном файле.
   if (idea) {
     name = `${idea.animal} — ${idea.hook}`;
     задумка = `Задумка была такая. Герой: ${idea.animal}. Хук: ${idea.hook}. ` +
@@ -304,6 +302,30 @@ Deno.serve(async (req) => {
     // сходится со зверем идеи, идею к ролику не привязываем вовсе — иначе
     // задания на переделку потянут чужой эталон и чужой промт.
     const зверьВКадре = (разбор.tag ?? "").trim();
+
+    // Завод узнаёт героя сам. Заказчица берёт кнопкой «Сделаю сама» сразу
+    // несколько идей — волка, обезьяну, моль — и присылает ролики пачкой, без
+    // подписей. Раньше все они получали имя ПОСЛЕДНЕЙ выбранной идеи, и десятки
+    // роликов слипались в одного зверя. Теперь смотрим, кого разбор увидел в
+    // кадре, и берём ту её идею, где этот зверь и есть: тема и реплика
+    // подтягиваются свои.
+    if (!idea && зверьВКадре) {
+      const { data: взятые } = await admin.from("video_ideas").select(ideaSelect)
+        .eq("user_id", profile.id).eq("status", "approved").eq("route", "self")
+        .order("decided_at", { ascending: false }).limit(60);
+      const вКадре = зверьВКадре.toLowerCase();
+      const слова = вКадре.split(/[\s,.:;—-]+/).filter((с) => с.length > 2);
+      idea = (взятые ?? []).find((и) => {
+        const зверь = String(и.animal ?? "").toLowerCase();
+        return зверь.length > 2 && (вКадре.includes(зверь) || слова.some((с) => зверь.includes(с)));
+      }) ?? null;
+      if (idea) {
+        name = `${idea.animal} — ${idea.hook}`;
+        задумка = `Задумка была такая. Герой: ${idea.animal}. Хук: ${idea.hook}. ` +
+          `Реплика: «${idea.line}».`;
+      }
+    }
+
     if (idea && зверьВКадре) {
       const идейный = String(idea.animal ?? "").toLowerCase();
       const вКадре = зверьВКадре.toLowerCase();
