@@ -250,6 +250,24 @@ async function нишиПоТемам(ключ: string) {
   return итог.sort((a, b) => b.спрос - a.спрос);
 }
 
+/**
+ * Хэштеги ТикТока: где мало снято, а смотрят много. Считает не эта функция:
+ * TikTok не отвечает серверам Supabase (10.09.2026 из облака пришло ноль
+ * тегов, а с домашней машины — все сорок пять). Собирает приёмник скриптом
+ * `scripts/теги-тиктока.mjs` раз в сутки, здесь только читаем готовое.
+ */
+async function тегиТиктока(admin: SupabaseClient) {
+  const { data } = await admin.from("tiktok_tegi")
+    .select("teg, rolikov, na_rolik, sobrano_at")
+    .gte("sobrano_at", new Date(Date.now() - 7 * 86400_000).toISOString())
+    .order("na_rolik", { ascending: false });
+  return (data ?? []).map((с) => ({
+    тег: String(с.teg),
+    роликов: Number(с.rolikov),
+    на_ролик: Number(с.na_rolik),
+  }));
+}
+
 Deno.serve(async (req) => {
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   if (req.method !== "POST") return json(405, { error: "POST only" });
@@ -322,6 +340,25 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Хэштеги ТикТока: берём пять самых щедрых при малой конкуренции и три
+  // перегретых. Это готовый набор для описания следующего ролика.
+  const теги = await тегиТиктока(admin);
+  if (теги.length >= 6) {
+    const мало = теги.filter((т) => т.роликов < 50000).slice(0, 5);
+    const перегрето = [...теги].sort((a, b) => b.роликов - a.роликов).slice(0, 3);
+    if (мало.length >= 3) {
+      пара(
+        `Хэштеги ТикТока, где мало снято и много смотрят: ` +
+          мало.map((т) => `#${т.тег} (${т.роликов} роликов, ${т.на_ролик} просмотров на ролик)`).join(", ") +
+          `. Ставить их в описание.`,
+        `Перегретые хэштеги: ` +
+          перегрето.map((т) => `#${т.тег} (${т.роликов} роликов, всего ${т.на_ролик} на ролик)`).join(", ") +
+          `. Не ставить, ролик там тонет.`,
+        { источник: "tiktok challenge api", строки: теги.slice(0, 20) },
+      );
+    }
+  }
+
   const ключYT = Deno.env.get("YOUTUBE_API_KEY");
   let ниши: Awaited<ReturnType<typeof нишиПоТемам>> = [];
   if (ключYT) {
@@ -380,7 +417,7 @@ Deno.serve(async (req) => {
       медиана: общаяМедиана,
       выводов: выводы.length,
     },
-    evidence: { срезы, ниши, тикток: тикток ?? null },
+    evidence: { срезы, ниши, теги, тикток: тикток ?? null },
   });
 
   return json(200, {
