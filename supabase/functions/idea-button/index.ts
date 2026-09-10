@@ -537,9 +537,6 @@ ${выбранная}
       // ролике речь, а не читать служебное «написать промт ролика по идее».
       text: `${idea.animal} — ${idea.hook}. ` +
         `Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
-        `Людей в кадре НЕТ — ни рук, ни спин, ни прохожих: Gemini отказывает ` +
-        `«затрагивает лица третьих сторон» и ролик не снимается. Только звери ` +
-        `и предметы. ` +
         `${trustedTaskContext(idea, ownerPreference, learningEvidence)} ` +
         `Порядок обязателен: scenarist → director → cinematographer → critic, ` +
         `перед этим JOURNAL.md и PROCESS.md. Промт прислать одним блоком и ` +
