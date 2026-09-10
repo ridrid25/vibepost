@@ -45,6 +45,12 @@ async function sha256Hex(value: string): Promise<string> {
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
+/** evidence_roots приходит из базы как jsonb: тип нужен, иначе deno check ругается. */
+type Корни = {
+  MARKET_REFERENCE?: { mechanics?: unknown[] };
+  OWNER_PREFERENCE?: { market_avoidance?: unknown[] };
+} | null | undefined;
+
 function trustedTaskContext(
   idea: Record<string, unknown>,
   ownerPreference: unknown = null,
@@ -66,15 +72,15 @@ function trustedTaskContext(
     };
     const marketReference = idea.market_context_hash ? {
       source_type: "MARKET_REFERENCE",
-      mechanics: idea.evidence_roots?.MARKET_REFERENCE?.mechanics ?? [],
+      mechanics: (idea.evidence_roots as Корни)?.MARKET_REFERENCE?.mechanics ?? [],
       changed_variable: idea.changed_variable ?? null,
       confidence: idea.idea_confidence ?? "LOW",
-      limitations: (idea.evidence_conflicts ?? []).map((entry: Record<string, unknown>) => ({
+      limitations: ((idea.evidence_conflicts ?? []) as Array<Record<string, unknown>>).map((entry) => ({
         conflict_type: entry.conflict_type, resolution: entry.resolution,
         confidence: entry.confidence, limitations: entry.limitations,
       })),
     } : { source_type: "MARKET_REFERENCE", mechanics: [] };
-    const marketAvoidance = idea.evidence_roots?.OWNER_PREFERENCE?.market_avoidance ?? [];
+    const marketAvoidance = (idea.evidence_roots as Корни)?.OWNER_PREFERENCE?.market_avoidance ?? [];
     return `target_platform=tiktok; сохранить существующий current production house format. ` +
       `TRUSTED OWN_PERFORMANCE: ${JSON.stringify(ownPerformance)}. ` +
       `OWNER_PREFERENCE (не performance evidence): ${JSON.stringify(ownerPreference ?? {
@@ -519,17 +525,26 @@ ${выбранная}
   // критика — то есть мимо правил речи из JOURNAL.md. Теперь бот только
   // записывает выбранную идею заданием.
   if (action === "self") {
-    const { error: сбой } = await admin.from("claude_tasks").upsert({
+    // Обычная вставка, без prompt_task_kind: колонки для неё в облаке нет
+    // (миграция от 31.08 не накатана), а upsert по несуществующей колонке
+    // рушит запись задания целиком — заказчица жмёт кнопку, а промт не пишет
+    // никто. Дубль тут не страшнее потерянной идеи.
+    const { error: сбой } = await admin.from("claude_tasks").insert({
       user_id: idea.user_id,
       idea_id: idea.id,
-      prompt_task_kind: "SELECTED_PROMPT",
-      text: `Написать промт ролика по идее. Герой: ${idea.animal}. ` +
-        `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
+      // Первым — короткий заголовок. В приложении и на телефоне видно только
+      // начало строки: заказчица должна с одного взгляда понять, о каком
+      // ролике речь, а не читать служебное «написать промт ролика по идее».
+      text: `${idea.animal} — ${idea.hook}. ` +
+        `Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
+        `Людей в кадре НЕТ — ни рук, ни спин, ни прохожих: Gemini отказывает ` +
+        `«затрагивает лица третьих сторон» и ролик не снимается. Только звери ` +
+        `и предметы. ` +
         `${trustedTaskContext(idea, ownerPreference, learningEvidence)} ` +
         `Порядок обязателен: scenarist → director → cinematographer → critic, ` +
         `перед этим JOURNAL.md и PROCESS.md. Промт прислать одним блоком и ` +
         `записать в video_ideas.prompt.`,
-    }, { onConflict: "user_id,idea_id,prompt_task_kind", ignoreDuplicates: true });
+    });
     // Отказ базы нельзя выдавать за успех: 7 августа идея пропала молча, а
     // Татьяне ушло «Идею принял». Она ждала промт, которого никто не писал.
     if (сбой) {
