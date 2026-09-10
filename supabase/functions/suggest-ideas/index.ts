@@ -545,6 +545,38 @@ Deno.serve(async (req) => {
     serviceKey,
   );
 
+  // Мозг проверяем ДО того, как придумывать: если вчерашнего разбора нет,
+  // идеи пойдут вслепую — ровно то, из-за чего месяц выходило однообразие.
+  // Требование заказчицы 10.09.2026: каждый день перед роликами проверять,
+  // сделана ли аналитика, и звать её, если нет.
+  try {
+    const порог = new Date(Date.now() - 30 * 3600_000).toISOString();
+    const { count: разборов } = await admin.from("analitika_dnya")
+      .select("id", { count: "exact", head: true }).gte("created_at", порог);
+    const { count: уроков } = await admin.from("content_lessons")
+      .select("id", { count: "exact", head: true }).eq("source", "аналитика дня");
+    if (!разборов || !уроков) {
+      const { data: кому } = await admin.from("profiles")
+        .select("error_notify_tg_id").not("error_notify_tg_id", "is", null).limit(1).maybeSingle();
+      const токен = Deno.env.get("TELEGRAM_TEST_BOT_TOKEN");
+      if (кому?.error_notify_tg_id && токен) {
+        await fetch(`https://api.telegram.org/bot${токен}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: кому.error_notify_tg_id,
+            text: "Мозг завода молчит: " +
+              (!разборов ? "разбора за вчера нет" : "выводов в памяти нет") +
+              ". Идеи на сегодня придуманы вслепую — скажите мне, я разберусь.",
+          }),
+        }).catch(() => {});
+      }
+      console.error("brain check failed", { разборов, уроков });
+    }
+  } catch (e) {
+    console.error("brain check error", { message: String(e).slice(0, 200) });
+  }
+
   const body = await req.json().catch(() => ({}));
   const count = Math.min(Math.max(Number(body.count) || 5, 1), 5);
   const previewOnly = body.preview_only === true;

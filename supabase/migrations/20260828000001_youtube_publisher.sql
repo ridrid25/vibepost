@@ -293,3 +293,20 @@ alter table public.youtube_publish_queue drop constraint if exists youtube_publi
 alter table public.youtube_publish_queue add constraint youtube_publish_queue_status_check
   check (status = any (array['draft','scheduled','processing','uploaded','handed','published','failed']));
 alter table public.youtube_publish_queue add column if not exists handed_at timestamptz;
+
+-- 10.09: мозг завода. Дыры в схеме, из-за которых генератор идей молча падал,
+-- и таблица ежедневного разбора.
+alter table public.content_lessons add column if not exists source_platform text not null default 'tiktok';
+alter table public.content_lessons add column if not exists source text;
+create table if not exists public.analitika_dnya (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  za_den date not null default (now() at time zone 'Europe/Moscow')::date,
+  otchet text not null,
+  metrics jsonb not null default '{}'::jsonb,
+  evidence jsonb not null default '{}'::jsonb,
+  vyvodov int not null default 0,
+  created_at timestamptz not null default now()
+);
+-- market_references и content_lesson_youtube_publications созданы миграциями
+-- brain_missing_tables_and_columns и analitika_dnya в облаке.
