@@ -650,7 +650,7 @@ async function loadStoredDecision(admin: SupabaseClient, userId: string, platfor
   };
 }
 
-Deno.serve(async (req) => {
+async function handleSuggestIdeas(req: Request): Promise<Response> {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -1163,4 +1163,14 @@ Deno.serve(async (req) => {
     создано: saved.length,
     feedback_outcome: feedbackContext?.outcome ?? null,
   });
+}
+
+Deno.serve(async (req) => {
+  try {
+    return await handleSuggestIdeas(req);
+  } catch (error) {
+    const detail = safeError(error) || "unknown_error";
+    console.error("suggest-ideas unhandled", { detail });
+    return json(500, { error: `suggest-ideas failed: ${detail}` });
+  }
 });

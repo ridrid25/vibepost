@@ -125,6 +125,16 @@ test('trusted metadata separates reference inference from card-visible fields', 
   assert.match(context, /INFERENCE/);
   assert.match(context, /UNKNOWN:/);
   assert.match(context, /DO NOT COPY/);
+  const control = trustedIdeaMetadata({ reference_source_id: 'CONTROL_2', reference_driven: false });
+  assert.equal(Object.hasOwn(control, 'causal_pattern'), false);
+  assert.equal(Object.hasOwn(control, 'fidelity_constraints'), false);
+});
+
+test('top-level handler returns a useful JSON error instead of a bare Edge 500', () => {
+  const suggest = source('supabase/functions/suggest-ideas/index.ts');
+  assert.match(suggest, /async function handleSuggestIdeas/);
+  assert.match(suggest, /return await handleSuggestIdeas\(req\)/);
+  assert.match(suggest, /suggest-ideas failed:/);
 });
 
 test('production Telegram wiring keeps existing buttons and does not call Veo in self route', () => {

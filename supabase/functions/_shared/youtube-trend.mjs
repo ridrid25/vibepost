@@ -352,9 +352,7 @@ export function trustedIdeaMetadata(candidate) {
       reference_snapshot_at: null,
       reference_channel_baseline_views: null,
       reference_outlier_ratio: null,
-      causal_pattern: null,
       payoff_class: null,
-      fidelity_constraints: null,
     };
   }
   return {
