@@ -11,7 +11,7 @@
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 
 const REGION = "us-central1";
-// Лёгкая модель — самая дешёвая из доступных: 8 секунд примерно за 0.4 доллара.
+// Лёгкая модель — самая дешёвая из доступных: около 0.4 доллара за ролик.
 // Быстрая стоит вдвое, обычная — в восемь раз. Дороже лёгкой не берём без
 // отдельного разговора: именно обычная модель сожгла 3.2 доллара 31.07.2026.
 const МОДЕЛЬ = "veo-3.1-lite-generate-001";
@@ -162,7 +162,17 @@ Deno.serve(async (req) => {
         headers: { Authorization: `Bearer ${gToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({
           instances: [{ prompt: идея.prompt }],
-          parameters: { sampleCount: 1, aspectRatio: "9:16", durationSeconds: 8, resolution: "720p" },
+          // Длительность — из самого промта. Ролики канала десятисекундные; восьмёрка,
+          // стоявшая тут раньше, ужимала действие и разваливала замер (10.09.2026).
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: "9:16",
+            durationSeconds: (() => {
+              try { return Number(JSON.parse(идея.prompt as string).duration_seconds) || 10; }
+              catch { return 10; }
+            })(),
+            resolution: "720p",
+          },
         }),
       });
       const d = await res.json();
