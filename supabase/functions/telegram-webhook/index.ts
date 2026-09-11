@@ -69,6 +69,7 @@ function ownerKeyboard(targetPlatform: string) {
        { text: `${тг ? "" : "✅ "}YouTube-канал` }],
       [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
       [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
+      [{ text: "🎭 Герой серии" }, { text: "🙋 Позвать Claude" }],
       [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
     ],
     resize_keyboard: true,
@@ -129,6 +130,8 @@ async function handleCommand(
     else if (raw.includes("дайджест")) cmd = "/digest";
     else if (raw.includes("входящие")) cmd = "/inbox";
     else if (raw.includes("задание")) cmd = "/task";
+    else if (raw.includes("герой серии") || raw.includes("🎭")) cmd = "/geroy";
+    else if (raw.includes("позвать claude") || raw.includes("🙋")) cmd = "/claude";
     else if ((raw.includes("подключ") || raw.includes("привяж")) &&
       (raw.includes("ютуб") || raw.includes("youtube"))) cmd = "/yt_connect";
     else if (raw.includes("тикток") || raw.includes("телеграм-канал")) cmd = "/pf_tg";
@@ -140,6 +143,28 @@ async function handleCommand(
   // Режим «жду текст задания»: следующее сообщение — не команда, а задание
   // для Claude. Проверяется до разбора команд, иначе съест их как текст.
   // Кнопка под замером назвала ролик прямо — угадывать не нужно.
+  // Ответ на кнопку «Герой серии»: следующее сообщение — имя зверя.
+  if (!cmd && profile.awaiting_kind === "geroy" && msg.text) {
+    const сказано = msg.text.trim().slice(0, 60);
+    const снять = /^(люб|нет|сброс|отмен|без)/i.test(сказано);
+    await admin.from("profiles").update({
+      vedushchiy_geroy: снять ? null : сказано,
+      geroy_postavlen_at: снять ? null : new Date().toISOString(),
+      awaiting_kind: null, awaiting_video_id: null, awaiting_task: false,
+    }).eq("id", profile.id);
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: снять
+          ? "Снял ведущего героя: идеи снова будут про разных зверей."
+          : `Ведущий герой — «${сказано}». Следующие идеи завод придумает про него. ` +
+            `Сменить или снять — та же кнопка «🎭 Герой серии».`,
+      }),
+    }).catch(() => {});
+    return;
+  }
+
   if (!cmd && profile.awaiting_video_id) {
     const текст = msg.text.trim();
     const первая = текст.split("\n")[0].trim();
@@ -313,6 +338,38 @@ async function handleCommand(
       }).catch(() => {});
       return;
     }
+  }
+
+  // Любой текст, который не оказался ни командой, ни названием ролика, ни
+  // ответом на вопрос бота, — это задание заводу. Раньше он отвечал на такое
+  // непониманием, и заказчице приходилось садиться за компьютер и говорить
+  // через Claude. Телефон для того и заведён, чтобы обходиться без этого.
+  if (!cmd && msg.text && msg.text.trim().length >= 3 && !msg.text.startsWith("/")) {
+    const текст = msg.text.trim().slice(0, 2000);
+    const { data: свежий } = await admin
+      .from("incoming_videos")
+      .select("id,idea_id,target_platform,causal_pattern")
+      .eq("user_id", profile.id)
+      .gte("created_at", new Date(Date.now() - 20 * 60 * 1000).toISOString())
+      .in("status", ["new", "rework"])
+      .order("created_at", { ascending: false })
+      .limit(1).maybeSingle();
+    const { error: сбой } = await admin.from("claude_tasks").insert({
+      user_id: profile.id,
+      text: `${текст}${trustedVideoContext(свежий)}`,
+      video_id: свежий?.id ?? null,
+      idea_id: свежий?.idea_id ?? null,
+    });
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: сбой
+          ? `Не смог записать задание: ${сбой.message}. Напишите ещё раз.`
+          : "Принял в работу. Завод поднимется сам и сделает — ответ придёт сюда.",
+      }),
+    }).catch(() => {});
+    return;
   }
 
   const { todayStart, tomorrowStart, dayAfterStart } = mskDayBounds();
@@ -568,6 +625,29 @@ async function handleCommand(
       body: "{}",
     }).catch(() => {});
     return;
+  } else if (cmd === "/geroy") {
+    // Ведущий герой серии. Один зверь через десять роликов даёт узнавание в
+    // ленте: 11.09.2026 при 20 роликах и досмотре выше 100% у канала было
+    // 15 подписок — зритель досматривал и не понимал, зачем возвращаться.
+    const { data: сейчас } = await admin.from("profiles")
+      .select("vedushchiy_geroy").eq("id", uid).maybeSingle();
+    await admin.from("profiles").update({ awaiting_kind: "geroy", awaiting_task: false }).eq("id", uid);
+    reply = сейчас?.vedushchiy_geroy
+      ? `🎭 Сейчас ведущий герой — <b>${сейчас.vedushchiy_geroy}</b>.` + СТРОКА + СТРОКА +
+        `Напишите следующим сообщением другого зверя, и идеи пойдут про него. ` +
+        `Чтобы снова брать каждый раз нового — напишите «любой».`
+      : `🎭 Ведущего героя нет: завод берёт каждый раз нового зверя.` + СТРОКА + СТРОКА +
+        `Напишите следующим сообщением, кто ведёт серию — например «гиена», — ` +
+        `и следующие идеи будут про него.`;
+  } else if (cmd === "/claude") {
+    await admin.from("claude_tasks").insert({
+      user_id: uid,
+      text: "ЗАКАЗЧИЦА ПОЗВАЛА. Она нажала кнопку «Позвать Claude» в боте. " +
+        "Написать ей в бот: «Я здесь, слушаю» — и ждать, что скажет. " +
+        "Ничего не чинить и не переписывать, пока она не сказала что.",
+    });
+    reply = "🙋 Позвала. Claude поднимется на компьютере и напишет сюда." + СТРОКА + СТРОКА +
+      "Пока его нет, завод работает сам: кнопки и задания в порядке.";
   } else if (cmd === "/task") {
     await admin.from("profiles").update({ awaiting_task: true }).eq("id", uid);
     const { data: ждут } = await admin

@@ -597,7 +597,7 @@ Deno.serve(async (req) => {
   if (!ownerId) return json(500, { error: "owner_not_configured" });
   const { data: profile } = await admin
     .from("profiles")
-    .select("id, error_notify_tg_id, error_notify_bot_id, target_platform")
+    .select("id, error_notify_tg_id, error_notify_bot_id, target_platform, vedushchiy_geroy")
     .eq("id", ownerId)
     .maybeSingle();
   if (!profile?.error_notify_tg_id || !profile.error_notify_bot_id) {
@@ -712,7 +712,14 @@ Deno.serve(async (req) => {
             role: "user",
             parts: [{
               text: `${СТИЛЬ}\n\nПридумай ${count} новых идей.\n` +
-                (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "") +
+                // Ведущий герой: один зверь через десять роликов даёт узнавание в
+                // ленте. Ставится кнопкой «Герой серии»; пока не поставлен —
+                // зверь каждый раз новый, как было всегда.
+                (profile?.vedushchiy_geroy
+                  ? `ГЛАВНОЕ: герой всех идей — ${profile.vedushchiy_geroy}. Во всех ` +
+                    `${count} идеях именно он, менять зверя нельзя. Разными должны быть ` +
+                    `денежная тема, место действия, реквизит и шутка.\n`
+                  : (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "")) +
                 `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
                 `без морали и без объяснений шутки.\n\n` +
                 (feedbackContext ? formatTikTokFeedbackPromptContext(feedbackContext) : "") +
