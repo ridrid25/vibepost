@@ -335,7 +335,8 @@ test("migration reuses existing stores with exclusive platform subjects and no f
 test("snapshot ownership, lesson evidence and promotion are referential and idempotent", () => {
   const sql = source("supabase/migrations/20260831000003_youtube_own_learning.sql");
   assert.match(sql, /foreign key \(short_id, user_id\) references public\.published_shorts \(id, user_id\)/);
-  assert.match(sql, /primary key \(lesson_id, experiment_id, short_id, snapshot_polled_at\)/);
+  assert.match(sql, /unique \(lesson_id, experiment_id, short_id, snapshot_polled_at\)/);
+  assert.match(sql, /create or replace view public\.youtube_short_snapshots/);
   assert.match(sql, /select distinct \(x->>'experiment_id'\)::uuid/);
   assert.match(sql, /on conflict do nothing/);
   assert.match(sql, /youtube_lesson_key/);
@@ -397,6 +398,23 @@ test("Content Brigade extends the existing engine with YouTube adapter actions",
   assert.match(brigade, /published_shorts_stats/);
 });
 
+test("scheduled brigade cycle evaluates only real registered YouTube pairs and writes lesson evidence", () => {
+  const brigade = source("supabase/functions/content-brigade/index.ts");
+  assert.match(brigade, /async function registerEligibleYoutubeExperiments/);
+  assert.match(brigade, /deriveYoutubeMaterialVector/);
+  assert.match(brigade, /validateYoutubeMaterialChange/);
+  assert.match(brigade, /create_youtube_content_experiment/);
+  assert.match(brigade, /sourceExperiment\?\.success_metrics/);
+  assert.match(brigade, /async function runYoutubeServerCycle/);
+  assert.match(brigade, /never invents an A\/B pair/);
+  assert.match(brigade, /\.eq\("platform", "youtube_shorts"\)/);
+  assert.match(brigade, /WAITING_FOR_CHECKPOINT/);
+  assert.match(brigade, /await recordYoutubeAnalysis/);
+  assert.match(brigade, /await recordYoutubeLesson/);
+  assert.match(brigade, /const youtube = await runYoutubeServerCycle/);
+  assert.match(brigade, /\.eq\("platform", "tiktok"\)/);
+});
+
 test("owner approval remains the only route to prompt work or paid generation", () => {
   const button = source("supabase/functions/idea-button/index.ts");
   assert.match(button, /self: \{ status: "approved", route: "self"/);
@@ -404,16 +422,16 @@ test("owner approval remains the only route to prompt work or paid generation", 
   const taskStart = button.indexOf('if (action === "self")', button.indexOf("// Промт по идее"));
   assert.ok(taskStart > button.indexOf("const решение = решения[action]"));
   assert.match(button.slice(taskStart), /claude_tasks/);
-  assert.match(button, /OWNER_PREFERENCE \(не performance evidence\)/);
-  const mappingGate = button.indexOf('blocked: "youtube_creative_mapping_required"');
-  const promptTask = button.indexOf('prompt_task_kind: "SELECTED_PROMPT"');
-  assert.ok(mappingGate > 0 && mappingGate < promptTask);
+  assert.ok(button.indexOf("decided_at: new Date().toISOString()") < taskStart);
+  const promptTask = button.indexOf('prompt_task_kind: "SELECTED_PROMPT"', taskStart);
+  assert.ok(promptTask > taskStart);
 });
 
-test("both accepted prompt modes require canonical YouTube identity and immutable provenance", () => {
+test("both accepted prompt modes create or reuse canonical YouTube identity and immutable provenance", () => {
   const sql = source("supabase/migrations/20260831000003_youtube_own_learning.sql");
   assert.match(sql, /p_mode not in \('CLAUDE_TASK','OWNER_SELECTED_EXISTING'\)/);
-  assert.match(sql, /youtube_creative_mapping_required/);
+  assert.match(sql, /upsert_creative_identity_mapping/);
+  assert.match(sql, /persist_tiktok_prompt_provenance_v2/);
   assert.match(sql, /v_mapping\.creative_id/);
   assert.match(sql, /owner_selected_at/);
   const tasks = source("scripts/задания.mjs");
@@ -423,7 +441,8 @@ test("both accepted prompt modes require canonical YouTube identity and immutabl
   const delivery = tasks.indexOf("await бот(экран(шапка)", provenance);
   assert.ok(provenance > 0 && delivery > provenance);
   const button = source("supabase/functions/idea-button/index.ts");
-  assert.match(button, /\["tiktok", "youtube_shorts"\]\.includes\(idea\.target_platform\)/);
+  assert.match(button, /target_platform,trend_signal,reference_source_id/);
+  assert.match(button, /trustedTaskContext\(idea\)/);
 });
 
 test("deterministic E2E traverses own Short to selected prompt provenance without live writes", async () => {

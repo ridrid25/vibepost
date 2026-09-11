@@ -70,12 +70,13 @@ function assertText(value, name, maxLength) {
  * Validates model output and restores the trusted reference order. Reference
  * metadata and causal_pattern are never accepted from the model.
  */
-export function validateYoutubeNovelIdeas(rawIdeas, experimentSet, history = []) {
+export function validateYoutubeNovelIdeas(rawIdeas, experimentSet, history = [], options = {}) {
   if (!Array.isArray(rawIdeas) || rawIdeas.length !== experimentSet.length) {
     throw new Error("youtube_idea_count_mismatch");
   }
 
-  const expected = experimentSet.map((item) => String(item?.reference_source_id ?? ""));
+  const expected = experimentSet.map((item) =>
+    String(item?.idea_contract_id ?? item?.reference_source_id ?? ""));
   const byReference = new Map();
   for (const idea of rawIdeas) {
     assertText(idea?.reference_id, "reference_id", 64);
@@ -90,6 +91,8 @@ export function validateYoutubeNovelIdeas(rawIdeas, experimentSet, history = [])
   const compared = [...history];
   for (const referenceId of expected) {
     const idea = byReference.get(referenceId);
+    const contract = experimentSet.find((item) =>
+      String(item?.idea_contract_id ?? item?.reference_source_id ?? "") === referenceId);
     assertText(idea.slug, "slug", 80);
     assertText(idea.animal, "animal", 80);
     assertText(idea.hook, "hook", 100);
@@ -99,18 +102,27 @@ export function validateYoutubeNovelIdeas(rawIdeas, experimentSet, history = [])
       throw new Error("youtube_idea_invalid_slug_format");
     }
 
-    const expectedPattern = referenceId === "CONTROL"
+    const expectedPattern = contract?.reference_driven === false || referenceId.startsWith("CONTROL")
       ? "CONTROL"
-      : String(experimentSet.find((item) => item.reference_source_id === referenceId)
-        ?.causal_pattern?.pattern_class ?? "");
+      : String(contract?.causal_pattern?.pattern_class ?? "");
     if (idea.causal_pattern_class !== expectedPattern) {
       throw new Error(`youtube_idea_causal_pattern_mismatch:${referenceId}`);
+    }
+    if (options.requiredHero &&
+        normalizeIdeaText(idea.animal) !== normalizeIdeaText(options.requiredHero)) {
+      throw new Error(`youtube_idea_leading_hero_mismatch:${referenceId}`);
     }
 
     const collision = youtubeIdeaCollision(idea, compared);
     if (collision) throw new Error(`youtube_idea_duplicate_${collision}:${referenceId}`);
-    accepted.push(idea);
-    compared.push(idea);
+    const acceptedIdea = {
+      ...idea,
+      source_kind: contract?.source_kind ?? null,
+      source_key: contract?.source_key ?? referenceId,
+      source_label: contract?.source_label ?? "текущий формат",
+    };
+    accepted.push(acceptedIdea);
+    compared.push(acceptedIdea);
   }
   return accepted;
 }

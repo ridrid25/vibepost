@@ -2,9 +2,11 @@
 // Uses a dedicated Vault secret; service_role never leaves Supabase.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import {
+  deriveYoutubeMaterialVector,
   evaluateYoutubeExperiment,
   normalizeYoutubeMetricFacts,
   selectYoutubeCheckpointSnapshot,
+  validateYoutubeMaterialChange,
 } from "../_shared/youtube-own-learning.mjs";
 
 const STUDIO_FIELDS = [
@@ -632,10 +634,11 @@ async function recordLesson(
   return json(201, { lesson: data });
 }
 
-async function runServerCycle(admin: SupabaseClient, userId: string) {
+async function runLegacyServerCycle(admin: SupabaseClient, userId: string) {
   const { data: experiments, error: experimentsError } = await admin.from("experiments")
     .select("id,hypothesis,success_metrics,status")
-    .eq("user_id", userId).in("status", ["OPEN", "AWAITING_DATA", "ANALYZED"]);
+    .eq("user_id", userId).eq("platform", "tiktok")
+    .in("status", ["OPEN", "AWAITING_DATA", "ANALYZED"]);
   if (experimentsError) throw experimentsError;
   const experimentIds = (experiments ?? []).map((experiment) => experiment.id);
   if (!experimentIds.length) {
@@ -716,6 +719,241 @@ async function runServerCycle(admin: SupabaseClient, userId: string) {
       : "NO STRONG HYPOTHESIS",
     results,
   });
+}
+
+async function registerEligibleYoutubeExperiments(admin: SupabaseClient, userId: string) {
+  const [{ data: hypotheses, error: hypothesesError },
+    { data: mappings, error: mappingsError },
+    { data: existing, error: existingError }] = await Promise.all([
+    admin.from("content_hypotheses")
+      .select("id,changed_variable,constants,feedback_context,status")
+      .eq("user_id", userId).eq("feedback_context->>platform", "youtube_shorts")
+      .in("status", ["HYPOTHESIS", "ACTIVE"]),
+    admin.from("creative_identity_map")
+      .select("id,video_idea_id,youtube_short_row_id")
+      .eq("user_id", userId).eq("platform", "youtube_shorts")
+      .not("video_idea_id", "is", null).not("youtube_short_row_id", "is", null),
+    admin.from("experiments")
+      .select("id,hypothesis_id,changed_variable,constants,success_metrics,control_youtube_short_id,variant_youtube_short_id")
+      .eq("user_id", userId).eq("platform", "youtube_shorts"),
+  ]);
+  if (hypothesesError) throw hypothesesError;
+  if (mappingsError) throw mappingsError;
+  if (existingError) throw existingError;
+  if (!hypotheses?.length || (mappings ?? []).length < 2) {
+    return { eligible_pairs: 0, experiments_registered: 0, skipped: "NO_ELIGIBLE_INPUT" };
+  }
+
+  const ideaIds = [...new Set((mappings ?? []).map((row) => row.video_idea_id).filter(isUuid))];
+  const { data: ideas, error: ideasError } = await admin.from("video_ideas")
+    .select("id,hypothesis_id,causal_pattern,payoff_class,prompt_framework_version,fidelity_constraints,created_at")
+    .eq("user_id", userId).eq("target_platform", "youtube_shorts").in("id", ideaIds);
+  if (ideasError) throw ideasError;
+  const ideaById = new Map((ideas ?? []).map((row) => [row.id, row]));
+  const candidates = [];
+  for (const mapping of mappings ?? []) {
+    const idea = ideaById.get(mapping.video_idea_id);
+    if (!idea?.hypothesis_id) continue;
+    const material = await deriveYoutubeMaterialVector(idea);
+    if (!material) continue;
+    candidates.push({ mapping, idea, material });
+  }
+  candidates.sort((left, right) =>
+    String(left.idea.created_at ?? "").localeCompare(String(right.idea.created_at ?? "")) ||
+    String(left.idea.id).localeCompare(String(right.idea.id)));
+
+  const existingPairKeys = new Set((existing ?? []).map((row) =>
+    `${row.hypothesis_id}|${row.control_youtube_short_id}|${row.variant_youtube_short_id}`));
+  const existingById = new Map((existing ?? []).map((row) => [row.id, row]));
+  let eligiblePairs = 0;
+  let registered = 0;
+  for (const hypothesis of hypotheses) {
+    if ((existing ?? []).some((row) => row.hypothesis_id === hypothesis.id)) continue;
+    const group = candidates.filter((candidate) => candidate.idea.hypothesis_id === hypothesis.id);
+    const sourceExperimentId = hypothesis.feedback_context?.OWN_PERFORMANCE?.primary?.experiment_id;
+    const sourceExperiment = isUuid(sourceExperimentId) ? existingById.get(sourceExperimentId) : null;
+    const successMetrics = sourceExperiment?.success_metrics;
+    if (!isObject(successMetrics)) continue;
+    pairSearch:
+    for (let controlIndex = 0; controlIndex < group.length; controlIndex++) {
+      for (let variantIndex = controlIndex + 1; variantIndex < group.length; variantIndex++) {
+        const control = group[controlIndex];
+        const variant = group[variantIndex];
+        const proof = validateYoutubeMaterialChange(
+          control.material, variant.material, hypothesis.changed_variable, hypothesis.constants,
+        );
+        if (!proof.valid) continue;
+        eligiblePairs++;
+        const pairKey = `${hypothesis.id}|${control.mapping.youtube_short_row_id}|${variant.mapping.youtube_short_row_id}`;
+        if (existingPairKeys.has(pairKey)) continue;
+        const { error } = await admin.rpc("create_youtube_content_experiment", {
+          p_user_id: userId,
+          p_hypothesis_id: hypothesis.id,
+          p_control_short_id: control.mapping.youtube_short_row_id,
+          p_variant_short_id: variant.mapping.youtube_short_row_id,
+          p_changed_variable: hypothesis.changed_variable,
+          p_constants: hypothesis.constants,
+          p_success_metrics: successMetrics,
+        });
+        if (error) throw error;
+        existingPairKeys.add(pairKey);
+        registered++;
+        break pairSearch;
+      }
+    }
+  }
+  return { eligible_pairs: eligiblePairs, experiments_registered: registered };
+}
+
+/**
+ * Evaluates only already registered, provenance-complete YouTube experiments.
+ * The scheduled cycle never invents an A/B pair: create_youtube_content_experiment
+ * remains the single strict gate for the one-variable contract. Once such a
+ * pair exists and its checkpoint is due, this adapter persists the analysis
+ * and the corresponding evidence bindings automatically.
+ */
+async function runYoutubeServerCycle(admin: SupabaseClient, userId: string) {
+  const registration = await registerEligibleYoutubeExperiments(admin, userId);
+  const { data: experiments, error: experimentsError } = await admin.from("experiments")
+    .select("id,hypothesis,changed_variable,constants,success_metrics,status,control_youtube_short_id,variant_youtube_short_id")
+    .eq("user_id", userId).eq("platform", "youtube_shorts")
+    .in("status", ["OPEN", "AWAITING_DATA", "ANALYZED"])
+    .order("created_at").order("id");
+  if (experimentsError) throw experimentsError;
+  if (!experiments?.length) return {
+    registered: 0, due: 0, evaluated: 0, analyses_written: 0,
+    lesson_updates: 0, pending: 0, results: [], registration,
+  };
+
+  const experimentIds = experiments.map((row) => row.id);
+  const shortIds = [...new Set(experiments.flatMap((row) =>
+    [row.control_youtube_short_id, row.variant_youtube_short_id]).filter(isUuid))];
+  const [{ data: publications, error: publicationsError },
+    { data: analyses, error: analysesError }] = await Promise.all([
+    admin.from("published_shorts").select("id,published_at")
+      .eq("user_id", userId).in("id", shortIds),
+    admin.from("content_analysis_results")
+      .select("id,experiment_id,checkpoint,conclusion,created_at")
+      .eq("user_id", userId).eq("platform", "youtube_shorts")
+      .in("experiment_id", experimentIds).order("created_at", { ascending: false }).order("id"),
+  ]);
+  if (publicationsError) throw publicationsError;
+  if (analysesError) throw analysesError;
+  const publishedAt = new Map((publications ?? []).map((row) => [row.id, row.published_at]));
+  const latestByCheckpoint = new Map<string, Record<string, unknown>>();
+  for (const row of analyses ?? []) {
+    const key = `${row.experiment_id}|${row.checkpoint}`;
+    if (!latestByCheckpoint.has(key)) latestByCheckpoint.set(key, row);
+  }
+
+  let due = 0;
+  let analysesWritten = 0;
+  let pending = 0;
+  const results: Array<Record<string, unknown>> = [];
+  for (const experiment of experiments) {
+    const spec = isObject(experiment.success_metrics) ? experiment.success_metrics : {};
+    const checkpoint = typeof spec.checkpoint === "string" ? spec.checkpoint : "";
+    const checkpointHours = CHECKPOINT_HOURS[checkpoint];
+    if (!checkpointHours) {
+      results.push({ experiment_id: experiment.id, state: "INVALID_CHECKPOINT" });
+      continue;
+    }
+    const prior = latestByCheckpoint.get(`${experiment.id}|${checkpoint}`);
+    if (prior) {
+      results.push({ experiment_id: experiment.id, state: "ALREADY_EVALUATED",
+        conclusion: prior.conclusion ?? "INCONCLUSIVE" });
+      continue;
+    }
+    const dates = [experiment.control_youtube_short_id, experiment.variant_youtube_short_id]
+      .map((id) => publishedAt.get(id)).map((value) => Date.parse(String(value ?? "")));
+    if (dates.some((value) => !Number.isFinite(value))) {
+      pending++;
+      results.push({ experiment_id: experiment.id, state: "PUBLICATION_TIME_UNKNOWN" });
+      continue;
+    }
+    const dueAt = Math.max(...dates) + checkpointHours * 3_600_000;
+    if (Date.now() < dueAt) {
+      pending++;
+      results.push({ experiment_id: experiment.id, state: "WAITING_FOR_CHECKPOINT",
+        checkpoint, due_at: new Date(dueAt).toISOString() });
+      continue;
+    }
+    due++;
+    const response = await recordYoutubeAnalysis(admin, userId, {
+      experiment_id: experiment.id, checkpoint,
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      results.push({ experiment_id: experiment.id, state: "ANALYSIS_ERROR",
+        error: payload.error ?? "analysis_failed" });
+      continue;
+    }
+    if (payload.persisted) analysesWritten++;
+    results.push({ experiment_id: experiment.id,
+      state: payload.persisted ? "EVALUATED" : "WAITING_FOR_SNAPSHOT",
+      conclusion: payload.verdict?.conclusion ?? "INCONCLUSIVE" });
+  }
+
+  const { data: currentAnalyses, error: currentAnalysesError } = await admin
+    .from("content_analysis_results")
+    .select("id,experiment_id,checkpoint,conclusion,created_at")
+    .eq("user_id", userId).eq("platform", "youtube_shorts")
+    .in("experiment_id", experimentIds).order("created_at", { ascending: false }).order("id");
+  if (currentAnalysesError) throw currentAnalysesError;
+  const latestConclusive = new Map<string, Record<string, unknown>>();
+  for (const row of currentAnalyses ?? []) {
+    if (!latestConclusive.has(row.experiment_id) && ["PASS", "FAIL"].includes(row.conclusion)) {
+      latestConclusive.set(row.experiment_id, row);
+    }
+  }
+  const experimentById = new Map(experiments.map((row) => [row.id, row]));
+  const groups = new Map<string, Array<{
+    analysis: Record<string, any>;
+    experiment: Record<string, any>;
+  }>>();
+  for (const analysis of latestConclusive.values()) {
+    const experiment = experimentById.get(String(analysis.experiment_id));
+    if (!experiment) continue;
+    const signature = `${analysis.conclusion}|${experiment.changed_variable}|${JSON.stringify(experiment.constants ?? {})}`;
+    const group = groups.get(signature) ?? [];
+    group.push({ analysis, experiment });
+    groups.set(signature, group);
+  }
+
+  let lessonUpdates = 0;
+  for (const group of groups.values()) {
+    group.sort((left, right) => String(left.experiment.id).localeCompare(String(right.experiment.id)));
+    const evidence = group.map((entry) => ({ experiment_id: entry.experiment.id }));
+    const conclusion = String(group[0].analysis.conclusion);
+    const variable = String(group[0].experiment.changed_variable);
+    const lesson = group.length === 1
+      ? `YouTube: ${variable} — ${conclusion}. Одиночный эксперимент; требуется независимое подтверждение.`
+      : `YouTube: ${variable} — ${conclusion} подтверждено независимыми экспериментами (${group.length}).`;
+    const lessonResponse = await recordYoutubeLesson(admin, userId, {
+      lesson,
+      category: conclusion === "PASS" ? "WINNING_PATTERN" : "FAILED_PATTERN",
+      evidence,
+      applicable_topics: [],
+    });
+    if (lessonResponse.ok) lessonUpdates++;
+    else {
+      const payload = await lessonResponse.json();
+      results.push({ state: "LESSON_ERROR", error: payload.error ?? "lesson_failed",
+        experiment_ids: evidence.map((item) => item.experiment_id) });
+    }
+  }
+  return {
+    registered: experiments.length, due, evaluated: results.filter((row) => row.state === "EVALUATED").length,
+    analyses_written: analysesWritten, lesson_updates: lessonUpdates, pending, results, registration,
+  };
+}
+
+async function runServerCycle(admin: SupabaseClient, userId: string) {
+  const legacyResponse = await runLegacyServerCycle(admin, userId);
+  if (!legacyResponse.ok) return legacyResponse;
+  const legacy = await legacyResponse.json();
+  const youtube = await runYoutubeServerCycle(admin, userId);
+  return json(200, { ...legacy, youtube });
 }
 
 async function recordYoutubeExperiment(

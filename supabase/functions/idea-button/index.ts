@@ -35,9 +35,11 @@ function ideaCard(idea: Record<string, unknown>, suffix = "") {
   const trend = idea.trend_signal === "reference-driven"
     ? "\nТренд-сигнал: reference-driven"
     : "";
+  const source = idea.target_platform === "youtube_shorts" && idea.why_this_idea
+    ? `\nвзято: ${html(idea.why_this_idea)}` : "";
   return `🎬 <b>${html(idea.hook)}</b>\n\n${html(idea.line)}\n\n<i>${html(idea.animal)}</i>` +
     `\n\nЦелевая площадка: ${platformLabel(String(idea.target_platform ?? "tiktok"))}` +
-    `${trend}${suffix ? `\n\n${suffix}` : ""}`;
+    `${trend}${source}${suffix ? `\n\n${suffix}` : ""}`;
 }
 
 function trustedTaskContext(idea: Record<string, unknown>) {
@@ -168,7 +170,7 @@ Deno.serve(async (req) => {
   }
 
   const { data: profile } = await admin
-    .from("profiles").select("id, error_notify_bot_id")
+    .from("profiles").select("id, error_notify_bot_id, target_platform")
     .eq("error_notify_tg_id", fromId).maybeSingle();
   if (!profile?.error_notify_bot_id) return json(200, { ok: true });
 
@@ -192,7 +194,11 @@ Deno.serve(async (req) => {
         Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ count }),
+      body: JSON.stringify({
+        count,
+        ...(profile.target_platform === "youtube_shorts"
+          ? { request_id: `telegram:${crypto.randomUUID()}` } : {}),
+      }),
     }).catch(() => null);
 
   const запустить = (fn: string) =>
@@ -326,6 +332,7 @@ ${выбранная}
     await admin.from("claude_tasks").insert({
       user_id: правимая.user_id,
       idea_id: правимая.id,
+      prompt_task_kind: "SELECTED_PROMPT",
       text: `Реплику правили. Переписать промт. Герой: ${правимая.animal}. ` +
         `Хук: ${правимая.hook}. Новая реплика: «${новая}». Slug: ${правимая.slug}. ` +
         `${trustedTaskContext(правимая)} ` +
@@ -348,7 +355,7 @@ ${выбранная}
   }
 
   const { data: idea } = await admin
-    .from("video_ideas").select("id,user_id,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints")
+    .from("video_ideas").select("id,user_id,slug,hook,line,animal,prompt,target_platform,trend_signal,reference_source_id,causal_pattern,payoff_class,fidelity_constraints,why_this_idea")
     .eq("id", ideaId).eq("user_id", profile.id).maybeSingle();
   if (!idea) {
     await tg("answerCallbackQuery", { callback_query_id: cq.id, text: "Идея не найдена" });
@@ -394,6 +401,7 @@ ${выбранная}
     const { error: сбой } = await admin.from("claude_tasks").insert({
       user_id: idea.user_id,
       idea_id: idea.id,
+      prompt_task_kind: "SELECTED_PROMPT",
       // Первым — короткий заголовок: в приложении и на телефоне видно только
       // начало строки, служебное «Написать промт ролика по идее» съедало место.
       text: `${idea.animal} — ${idea.hook}. ` +
@@ -439,6 +447,7 @@ ${выбранная}
       await admin.from("claude_tasks").insert({
         user_id: idea.user_id,
         idea_id: idea.id,
+        prompt_task_kind: "SELECTED_PROMPT",
         text: `Написать промт для ПЛАТНОЙ генерации. Герой: ${idea.animal}. ` +
           `Хук: ${idea.hook}. Реплика: «${idea.line}». Slug: ${idea.slug}. ` +
           `${trustedTaskContext(idea)} ` +

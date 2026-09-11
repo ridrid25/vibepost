@@ -89,7 +89,10 @@ alter table public.claude_tasks
   add constraint claude_tasks_idea_owner_fk
     foreign key (idea_id, user_id) references public.video_ideas (id, user_id);
 
-create unique index claude_tasks_one_selected_prompt_per_idea
+-- The live factory may create several prompt revisions for one selected idea.
+-- Idempotency belongs to video_prompt_records per task, not to the idea as a
+-- whole, otherwise the existing rework loop is blocked after revision one.
+create index claude_tasks_selected_prompt_lookup
   on public.claude_tasks (user_id, idea_id, prompt_task_kind);
 
 alter table public.video_prompt_records

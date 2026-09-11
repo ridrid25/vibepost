@@ -412,6 +412,7 @@ export async function youtubeFeedbackBatchKey(userId, requestId) {
 export async function annotateYoutubeCandidates(candidates, context) {
   return await Promise.all((candidates ?? []).map(async (candidate) => {
     const referenceId = candidate.reference_id ?? candidate.reference_source_id;
+    const provenanceId = candidate.source_key ?? referenceId;
     const market = context.MARKET_REFERENCE.find((row) => row.reference_id === referenceId) ?? null;
     const conflict = market?.conflict ?? null;
     const candidateVector = market && context.OWN_PERFORMANCE.prompt_framework
@@ -428,7 +429,7 @@ export async function annotateYoutubeCandidates(candidates, context) {
     const ownBound = Boolean(exactOwnMutation && !conflict);
     return {
       ...candidate,
-      market_reference_ids: referenceId ? [referenceId] : [],
+      market_reference_ids: provenanceId ? [provenanceId] : [],
       selected_lesson_ids: ownBound
         ? context.OWN_PERFORMANCE.selected_lessons.map((row) => row.lesson_id) : [],
       avoided_lesson_ids: ownBound
@@ -439,14 +440,14 @@ export async function annotateYoutubeCandidates(candidates, context) {
       hypothesis_id: null,
       changed_variable: ownBound ? context.hypothesis_candidate.changed_variable : null,
       experiment_constants: ownBound ? context.hypothesis_candidate.constants : null,
-      why_this_idea: conflict
+      why_this_idea: candidate.source_label ?? (conflict
         ? `MARKET-vs-OWN conflict preserved for ${market.pattern_key}; controlled re-test only.`
-        : "MARKET_REFERENCE and OWN_PERFORMANCE provenance remain separate.",
+        : "MARKET_REFERENCE and OWN_PERFORMANCE provenance remain separate."),
       idea_confidence: conflict ? lowerConflictConfidence("MEDIUM") : "MEDIUM",
       evidence_conflicts: conflict ? [{ pattern_key: market.pattern_key, ...conflict }] : [],
       evidence_mode: ownBound ? "OWN_PERFORMANCE_BOUND" : "MARKET_REFERENCE_ONLY",
       evidence_roots: {
-        MARKET_REFERENCE: referenceId ? [referenceId] : [],
+        MARKET_REFERENCE: provenanceId ? [provenanceId] : [],
         OWN_PERFORMANCE: ownBound
           ? context.OWN_PERFORMANCE.selected_lessons.map((row) => row.lesson_id) : [],
         OWNER_PREFERENCE: {

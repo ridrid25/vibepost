@@ -1330,6 +1330,48 @@ b4997736), скумбрия (9af31d84, f7e35143, 10dc1b15), горлица (ea44
 
 Очередь заданий пуста (проверено дважды подряд).
 
+## 11.09.2026 — YouTube-надстройка доведена до live brain
+
+- В live Supabase `rjtyjybwygfkdekdzqbm` последовательно применены и отмечены
+  `20260825000001`, `20260831000002`, `20260831000003`,
+  `20260903000003`. Найдены все шесть требуемых функций; compatibility view
+  `youtube_short_snapshots` читает канонические `published_shorts_stats`
+  (195 строк на момент проверки), а не дублирует хранилище.
+- `suggest-ideas` для YouTube теперь собирает пять контрактов из четырёх
+  источников памяти: максимум один из фиксированной reference-библиотеки,
+  остальные из свежей `analitika_dnya`, поддержанных/отвергнутых
+  `content_lessons` и `tiktok_tegi`. FACT и ограничения передаются модели
+  отдельно; повтор по slug/hook/line/prompt по-прежнему закрывается
+  deterministic validator и DB trigger.
+- `profiles.vedushchiy_geroy` обязателен для всех пяти YouTube-кандидатов, но
+  не навязан TikTok. В Telegram у YouTube-карточки появилась одна строка
+  `взято: ...`; все прежние кнопки и self/manual flow сохранены.
+- Live `preview_only` после deploy: HTTP 200, `youtube_shorts`, 5 карточек,
+  ровно 1 reference-driven, все пять — «Гиена», у всех пяти есть источник.
+  Preview ничего не записал и не отправил в Telegram.
+- `market_references` не мёртвая: четыре принятых V0.1 эталона сохранены в
+  live и будут обновляться production-запросом идей. `experiments` и
+  `content_lesson_youtube_publications` — доказательные таблицы: фиктивные
+  пары не создаются; активный `vibepost-content-brigade` каждые 15 минут
+  ищет опубликованную пару одной гипотезы, проверяет однопараметрический
+  контракт и наследует заданные success metrics, затем регистрирует опыт,
+  оценивает наступивший checkpoint и создаёт lesson bindings при фактическом
+  PASS/FAIL. Сейчас подходящих пар нет, поэтому нулевые строки — честное
+  отсутствие контролируемого опыта, а не неработающий writer.
+- Тот же production-вызов `run_cycle` проверен через Vault/pg_net: HTTP 200,
+  YouTube adapter ответил `NO_ELIGIBLE_INPUT`, 0 зарегистрированных пар и 0
+  записей — ожидаемо при нынешних 0 полных связках гипотеза → две публикации.
+- Schema round-trip выбранной YouTube-идеи и prompt provenance прошёл внутри
+  транзакции с `ROLLBACK`. Focused suite: 58 passed, 0 failed, 1 live-test
+  сознательно skipped. Платный Veo, YouTube upload, музыка и расписание
+  статистики не менялись.
+- Общая самопроверка цепочки прошла полностью. Архивный набор из 274 тестов
+  дал 269 pass / 4 fail / 1 skip: четыре падения — старые текстовые assertions
+  `creative-identity`, `tiktok-market-to-idea` и два V21
+  `video-from-bot-fast-review`; проверяемые ими старые upload/pay/video
+  фрагменты этой задачей не менялись. Падения не маскировали правкой
+  TikTok/video flow.
+
 
 ## 10.09.2026 — дежурный: описания обезьяны и бригада по ней же
 

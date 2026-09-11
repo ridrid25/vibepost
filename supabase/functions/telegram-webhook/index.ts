@@ -596,7 +596,10 @@ async function handleCommand(
         Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
         "Content-Type": "application/json",
       },
-      body: "{}",
+      body: JSON.stringify({
+        ...(targetPlatform === "youtube_shorts"
+          ? { request_id: `telegram:${crypto.randomUUID()}` } : {}),
+      }),
     }).catch(() => null);
     if (!ideasResponse?.ok) {
       const failure = await ideasResponse?.json().catch(() => null);

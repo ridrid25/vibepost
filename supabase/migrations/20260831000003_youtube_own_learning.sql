@@ -131,40 +131,93 @@ alter table public.content_lessons
     (source_platform = 'tiktok' and cardinality(creative_ids_used) = 0
       and metric_provenance = '[]'::jsonb and limitations = '[]'::jsonb)
     or
-    (source_platform = 'youtube_shorts' and cardinality(videos_used) = 0
-      and changed_variable is not null and cardinality(creative_ids_used) > 0
-      and jsonb_array_length(metric_provenance) > 0)
+    (source_platform = 'youtube_shorts' and cardinality(videos_used) = 0 and (
+      (source = 'аналитика дня' and changed_variable is null
+        and cardinality(creative_ids_used) = 0 and metric_provenance = '[]'::jsonb)
+      or
+      (changed_variable is not null and cardinality(creative_ids_used) > 0
+        and jsonb_array_length(metric_provenance) > 0)
+    ))
   );
 
 create unique index content_lessons_youtube_key_unique
   on public.content_lessons (user_id,youtube_lesson_key)
   where youtube_lesson_key is not null;
 
-create table public.content_lesson_youtube_publications (
-  lesson_id uuid not null,
-  user_id uuid not null,
-  experiment_id uuid not null,
-  short_id uuid not null,
-  snapshot_polled_at timestamptz not null,
-  identity_map_id uuid not null,
-  created_at timestamptz not null default now(),
-  primary key (lesson_id, experiment_id, short_id, snapshot_polled_at),
-  foreign key (lesson_id, user_id) references public.content_lessons (id, user_id)
-    on delete cascade,
-  foreign key (experiment_id, user_id) references public.experiments (id, user_id),
-  foreign key (short_id, user_id) references public.published_shorts (id, user_id),
-  foreign key (short_id, snapshot_polled_at, user_id)
-    references public.published_shorts_stats (short_id, polled_at, user_id),
-  foreign key (identity_map_id, user_id)
-    references public.creative_identity_map (id, user_id)
-);
+-- A legacy empty table with an id primary key already exists in the live
+-- project. Evolve it in place: do not discard its identity or pretend a local
+-- CREATE TABLE is the cloud schema.
+alter table public.content_lesson_youtube_publications
+  add column if not exists experiment_id uuid,
+  add column if not exists short_id uuid,
+  add column if not exists snapshot_polled_at timestamptz,
+  add column if not exists identity_map_id uuid;
+do $$
+begin
+  if exists (select 1 from public.content_lesson_youtube_publications where
+      lesson_id is null or user_id is null or experiment_id is null or short_id is null
+      or snapshot_polled_at is null or identity_map_id is null) then
+    raise exception 'legacy_youtube_lesson_publications_require_reconciliation';
+  end if;
+  alter table public.content_lesson_youtube_publications
+    alter column lesson_id set not null,
+    alter column user_id set not null,
+    alter column experiment_id set not null,
+    alter column short_id set not null,
+    alter column snapshot_polled_at set not null,
+    alter column identity_map_id set not null;
+  if not exists (select 1 from pg_constraint where conname='content_lesson_youtube_publications_evidence_unique') then
+    alter table public.content_lesson_youtube_publications add constraint
+      content_lesson_youtube_publications_evidence_unique
+      unique (lesson_id, experiment_id, short_id, snapshot_polled_at);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='content_lesson_youtube_publications_lesson_owner_fk') then
+    alter table public.content_lesson_youtube_publications add constraint
+      content_lesson_youtube_publications_lesson_owner_fk foreign key (lesson_id,user_id)
+      references public.content_lessons(id,user_id) on delete cascade;
+  end if;
+  if not exists (select 1 from pg_constraint where conname='content_lesson_youtube_publications_experiment_owner_fk') then
+    alter table public.content_lesson_youtube_publications add constraint
+      content_lesson_youtube_publications_experiment_owner_fk foreign key (experiment_id,user_id)
+      references public.experiments(id,user_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='content_lesson_youtube_publications_short_owner_fk') then
+    alter table public.content_lesson_youtube_publications add constraint
+      content_lesson_youtube_publications_short_owner_fk foreign key (short_id,user_id)
+      references public.published_shorts(id,user_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='content_lesson_youtube_publications_snapshot_owner_fk') then
+    alter table public.content_lesson_youtube_publications add constraint
+      content_lesson_youtube_publications_snapshot_owner_fk
+      foreign key (short_id,snapshot_polled_at,user_id)
+      references public.published_shorts_stats(short_id,polled_at,user_id);
+  end if;
+  if not exists (select 1 from pg_constraint where conname='content_lesson_youtube_publications_identity_owner_fk') then
+    alter table public.content_lesson_youtube_publications add constraint
+      content_lesson_youtube_publications_identity_owner_fk foreign key (identity_map_id,user_id)
+      references public.creative_identity_map(id,user_id);
+  end if;
+end $$;
 alter table public.content_lesson_youtube_publications enable row level security;
+drop policy if exists clyp_owner on public.content_lesson_youtube_publications;
+drop policy if exists content_lesson_youtube_publications_owner_read
+  on public.content_lesson_youtube_publications;
 create policy "content_lesson_youtube_publications_owner_read"
   on public.content_lesson_youtube_publications for select
   using ((select auth.uid()) = user_id);
 revoke all on table public.content_lesson_youtube_publications
   from public, anon, authenticated, service_role;
 grant select on table public.content_lesson_youtube_publications to authenticated, service_role;
+
+-- Compatibility relation requested by the live factory. The canonical store
+-- remains published_shorts_stats, so there is no second snapshot table to
+-- drift or stay empty.
+create or replace view public.youtube_short_snapshots
+with (security_invoker = true) as
+select short_id, user_id, polled_at, views, likes, comments
+from public.published_shorts_stats;
+revoke all on public.youtube_short_snapshots from public, anon, authenticated, service_role;
+grant select on public.youtube_short_snapshots to authenticated, service_role;
 
 alter table public.video_ideas
   add column if not exists youtube_feedback_batch_key text,
@@ -765,6 +818,8 @@ declare
   v_task public.claude_tasks; v_idea public.video_ideas;
   v_existing public.video_prompt_records; v_record public.video_prompt_records;
   v_mapping public.creative_identity_map; v_actual_hash text;
+  v_source_task_id text; v_source_revision_id text; v_source_hash text;
+  v_handoff_id text; v_creative_id text;
 begin
   if p_mode not in ('CLAUDE_TASK','OWNER_SELECTED_EXISTING')
       or p_prompt_hash!~'^[0-9a-f]{64}$' or btrim(coalesce(p_prompt,''))=''
@@ -774,8 +829,15 @@ begin
   if p_mode='CLAUDE_TASK' then
     if p_claude_task_id is null then raise exception 'prompt_task_required'; end if;
     select * into v_task from public.claude_tasks t where t.id=p_claude_task_id for update;
-    if not found or v_task.idea_id<>p_video_idea_id or v_task.prompt_task_kind<>'SELECTED_PROMPT'
+    if not found or v_task.idea_id<>p_video_idea_id
       then raise exception 'prompt_task_chain_invalid'; end if;
+    if v_task.prompt_task_kind is null then
+      update public.claude_tasks set prompt_task_kind='SELECTED_PROMPT'
+        where id=v_task.id and user_id=v_task.user_id;
+      v_task.prompt_task_kind:='SELECTED_PROMPT';
+    elsif v_task.prompt_task_kind<>'SELECTED_PROMPT' then
+      raise exception 'prompt_task_chain_invalid';
+    end if;
     select * into v_idea from public.video_ideas i where i.id=v_task.idea_id
       and i.user_id=v_task.user_id for update;
     select * into v_existing from public.video_prompt_records r where r.user_id=v_task.user_id
@@ -794,10 +856,24 @@ begin
   if p_mode='OWNER_SELECTED_EXISTING' and (v_idea.route<>'paid' or v_idea.prompt is distinct from p_prompt)
     then raise exception 'owner_selected_prompt_conflict'; end if;
   if v_idea.target_platform='youtube_shorts' then
-    select * into strict v_mapping from public.creative_identity_map m
+    select * into v_mapping from public.creative_identity_map m
       where m.user_id=v_idea.user_id and m.platform='youtube_shorts' and m.video_idea_id=v_idea.id;
     if v_idea.evidence_roots is null or jsonb_typeof(v_idea.evidence_roots)<>'object'
       then raise exception 'youtube_prompt_evidence_required'; end if;
+    if v_mapping.id is null then
+      v_source_task_id:='video-idea:'||v_idea.id::text;
+      v_source_revision_id:='idea-v1';
+      v_source_hash:=encode(extensions.digest(convert_to(
+        'youtube-idea:'||v_idea.user_id::text||':'||v_idea.id::text,'UTF8'),'sha256'),'hex');
+      v_handoff_id:='handoff-'||encode(extensions.digest(convert_to(
+        'youtube-handoff:'||v_idea.user_id::text||':'||v_idea.id::text,'UTF8'),'sha256'),'hex');
+      v_creative_id:='creative-'||encode(extensions.digest(convert_to(format(
+        '{"domain":"content-factory:creative:v1","source_hash":"%s","source_revision_id":"%s","source_task_id":"%s"}',
+        v_source_hash,v_source_revision_id,v_source_task_id),'UTF8'),'sha256'),'hex');
+      select * into v_mapping from public.upsert_creative_identity_mapping(
+        v_idea.user_id,v_creative_id,v_source_task_id,v_source_revision_id,
+        v_source_hash,v_handoff_id,'youtube_shorts',v_idea.id,null,null,null);
+    end if;
   end if;
   if v_existing.id is not null then
     if v_existing.prompt_hash<>p_prompt_hash then raise exception 'prompt_provenance_conflict'; end if;
@@ -827,6 +903,22 @@ end; $$;
 revoke execute on function public.persist_tiktok_prompt_provenance(text,uuid,uuid,text,text)
   from public,anon,authenticated;
 grant execute on function public.persist_tiktok_prompt_provenance(text,uuid,uuid,text,text)
+  to service_role;
+
+-- The desktop duty worker calls the v2 name. Keep it as a narrow compatibility
+-- entry point to the same audited implementation; no parallel prompt path.
+create or replace function public.persist_tiktok_prompt_provenance_v2(
+  p_mode text, p_video_idea_id uuid, p_claude_task_id uuid,
+  p_prompt text, p_prompt_hash text
+) returns public.video_prompt_records
+language sql security definer set search_path = '' as $$
+  select public.persist_tiktok_prompt_provenance(
+    p_mode,p_video_idea_id,p_claude_task_id,p_prompt,p_prompt_hash
+  );
+$$;
+revoke execute on function public.persist_tiktok_prompt_provenance_v2(text,uuid,uuid,text,text)
+  from public,anon,authenticated;
+grant execute on function public.persist_tiktok_prompt_provenance_v2(text,uuid,uuid,text,text)
   to service_role;
 
 comment on function public.create_youtube_content_experiment is

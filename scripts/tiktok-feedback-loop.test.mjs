@@ -348,14 +348,13 @@ test("production wiring preserves owner authority and gates paid start on proven
   const paid = buttons.slice(buttons.indexOf('if (action === "pay")'));
   assert.ok(paid.indexOf("persist_tiktok_prompt_provenance") < paid.indexOf('запустить("veo-start")'));
   const edit = buttons.slice(buttons.indexOf('if (action === "edit")'), buttons.indexOf('if (action === "more")'));
-  assert.doesNotMatch(edit, /from\("claude_tasks"\)/);
-  assert.match(edit, /\.select\("id"\)\.maybeSingle\(\)/);
-  assert.match(edit, /if \(!edited\)/);
+  assert.match(edit, /from\("claude_tasks"\)\.insert/);
+  assert.match(edit, /prompt_task_kind: "SELECTED_PROMPT"/);
   assert.match(buttons, /prompt_task_kind: "SELECTED_PROMPT"/);
-  assert.match(buttons, /onConflict: "user_id,idea_id,prompt_task_kind"/);
-  assert.match(buttons, /feedbackEvidenceContext/);
-  assert.match(buttons, /selected_lessons/);
-  assert.match(buttons, /avoided_patterns/);
+  const migration = readFileSync("supabase/migrations/20260831000002_tiktok_feedback_loop.sql", "utf8");
+  assert.match(migration, /claude_tasks_selected_prompt_lookup/);
+  assert.doesNotMatch(migration, /unique index claude_tasks_one_selected_prompt_per_idea/);
+  assert.match(buttons, /trustedTaskContext\(idea\)/);
 });
 
 test("YouTube response contract stays outside TikTok feedback additions", () => {

@@ -13,6 +13,11 @@ import {
   trustedIdeaMetadata,
   youtubeFacts,
 } from '../supabase/functions/_shared/youtube-trend.mjs';
+import {
+  buildYoutubeIdeaBrain,
+  youtubeReferenceCount,
+} from '../supabase/functions/_shared/youtube-idea-brain.mjs';
+import { validateYoutubeNovelIdeas } from '../supabase/functions/_shared/youtube-idea-novelty.mjs';
 
 const root = new URL('..', import.meta.url);
 const source = (relative) => readFileSync(new URL(relative, root), 'utf8');
@@ -59,17 +64,47 @@ test('YouTube FACT snapshot computes VPH and leaves unsupported baseline UNKNOWN
   assert.deepEqual(facts.unknown_fields, ['reference_channel_baseline_views', 'reference_outlier_ratio']);
 });
 
-test('first YouTube experiment set is four references plus one control', () => {
+test('live YouTube batch keeps the fixed library but uses at most one reference', () => {
   const candidates = YOUTUBE_REFERENCE_LIBRARY.map((reference) => ({
+    ...reference,
     reference_source_id: reference.reference_id,
+    reference_vph: 100,
   }));
-  const set = selectYoutubeExperimentSet(candidates, 5);
-  assert.equal(set.length, 5);
-  assert.equal(set[4].reference_source_id, 'CONTROL');
-  const fallback = buildYoutubeApprovedFallback(set);
-  assert.equal(fallback.length, 5);
-  assert.deepEqual(fallback.map((idea) => idea.reference_id), set.map((item) => item.reference_source_id));
-  assert.equal(new Set(fallback.map((idea) => idea.slug)).size, 5);
+  const brain = buildYoutubeIdeaBrain({
+    references: candidates,
+    count: 5,
+    hero: 'капибара',
+    analytics: [{ id: 'daily-1', za_den: '2026-09-11',
+      otchet: '— Тема «сбережения»: медиана 209.\n— Тема «зарплата»: не брать.' }],
+    positive_lessons: [{ id: 'lesson-1', lesson: 'Движение 18+ помогает', category: 'WINNING_PATTERN', status: 'SUPPORTED' }],
+    avoided_lessons: [{ id: 'lesson-2', lesson: 'Зарплата не сработала', category: 'FAILED_PATTERN', status: 'REJECTED' }],
+    tags: [{ teg: 'ценырастут', rolikov: 10, prosmotrov: 1000, na_rolik: 100 }],
+  });
+  assert.equal(brain.contracts.length, 5);
+  assert.equal(youtubeReferenceCount(brain.contracts), 1);
+  assert.ok(brain.contracts.some((item) => item.source_kind === 'ANALYTICS'));
+  assert.ok(brain.contracts.some((item) => item.source_label.includes('сбережения')));
+  assert.ok(brain.guidance.avoided_lessons.some((item) => item.lesson.includes('Зарплата')));
+  const generated = brain.contracts.map((contract, index) => ({
+    reference_id: contract.idea_contract_id,
+    causal_pattern_class: contract.reference_driven
+      ? contract.causal_pattern.pattern_class : 'CONTROL',
+    slug: `new-idea-${index}`,
+    animal: 'капибара',
+    hook: `ХУК ${index}`,
+    line: `Реплика ${index}`,
+    prompt: `new prompt ${index}`,
+  }));
+  const accepted = validateYoutubeNovelIdeas(generated, brain.contracts, [], {
+    requiredHero: 'капибара',
+  });
+  assert.ok(accepted.every((idea) => idea.animal === 'капибара'));
+  assert.throws(() => validateYoutubeNovelIdeas(
+    [{ ...generated[0], animal: 'лиса' }, ...generated.slice(1)],
+    brain.contracts,
+    [],
+    { requiredHero: 'капибара' },
+  ), /leading_hero_mismatch/);
 });
 
 test('trusted metadata separates reference inference from card-visible fields', () => {
@@ -99,7 +134,10 @@ test('production Telegram wiring keeps existing buttons and does not call Veo in
   }
   assert.match(suggest, /fetchYoutubeTrendCandidates/);
   assert.match(suggest, /targetPlatform === TARGET_PLATFORMS\.YOUTUBE_SHORTS/);
-  assert.match(suggest, /generateYoutubeNovelIdeas\(admin, experimentSet, youtubeHistory\)/);
+  assert.match(suggest, /generateYoutubeNovelIdeas\([\s\S]*youtubeBrainGuidance/);
+  assert.match(suggest, /loadYoutubeBrainInputs/);
+  assert.match(suggest, /buildYoutubeIdeaBrain/);
+  assert.match(suggest, /взято:/);
   assert.match(suggest, /validateYoutubeNovelIdeas/);
   assert.match(suggest, /loadPlatformIdeaHistory\(admin, profile\.id, targetPlatform\)/);
   assert.match(suggest, /\.range\(from, from \+ pageSize - 1\)/);

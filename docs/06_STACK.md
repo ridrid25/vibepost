@@ -69,3 +69,9 @@
 | Video generation | Бесплатная ручная генерация по JSON prompt из Telegram |
 | Review | Existing Gemini advisory review + numerical `measure.py` |
 | YouTube publication | Ручная: YouTube OAuth/upload provider в VibePost отсутствует |
+| Idea brain | `_shared/youtube-idea-brain.mjs`: bounded contracts из live reference, `analitika_dnya`, `content_lessons`, `tiktok_tegi` |
+| Novelty/fidelity gate | `_shared/youtube-idea-novelty.mjs` + DB trigger; полная persisted history, hero lock только для YouTube |
+| Reference store | `market_references`, автоматически upsert при production `suggest-ideas`; четыре V0.1 references уже в live |
+| Own-result evidence | Generic `experiments` + `content_analysis_results` + `content_lesson_youtube_publications`; только provenance-complete пары |
+| Evidence schedule | Существующий `vibepost-content-brigade`, каждые 15 минут; strict pair discovery, регистрация и checkpoint-aware analysis без фиктивных A/B-пар |
+| Snapshot compatibility | `youtube_short_snapshots` — read-only view над `published_shorts_stats`, не новая таблица |

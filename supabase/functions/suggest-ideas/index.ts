@@ -15,9 +15,9 @@ import {
   formatTrendContext,
   normalizeTargetPlatform,
   platformLabel,
-  selectYoutubeExperimentSet,
   trustedIdeaMetadata,
 } from "../_shared/youtube-trend.mjs";
+import { buildYoutubeIdeaBrain } from "../_shared/youtube-idea-brain.mjs";
 import {
   compactYoutubeHistory,
   validateYoutubeNovelIdeas,
@@ -49,6 +49,17 @@ function json(status: number, body: unknown): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function safeError(error: unknown): string {
+  if (error instanceof Error) return error.message.slice(0, 300);
+  if (error && typeof error === "object") {
+    const value = error as Record<string, unknown>;
+    return [value.code, value.message, value.details, value.hint]
+      .filter((item) => typeof item === "string" && item)
+      .join(": ").slice(0, 300) || "unknown structured error";
+  }
+  return String(error).slice(0, 300);
 }
 
 // ── доступ к Google по служебному аккаунту ────────────────────────────────
@@ -210,8 +221,10 @@ function cardText(idea: Record<string, unknown>, targetPlatform: string): string
   const trend = idea.trend_signal === "reference-driven"
     ? "\nТренд-сигнал: reference-driven"
     : "";
+  const source = targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS && idea.why_this_idea
+    ? `\nвзято: ${html(idea.why_this_idea)}` : "";
   return `🎬 <b>${html(idea.hook)}</b>\n\n${html(idea.line)}\n\n<i>${html(idea.animal)}</i>` +
-    `\n\nЦелевая площадка: ${platform}${trend}`;
+    `\n\nЦелевая площадка: ${platform}${trend}${source}`;
 }
 
 async function configuredOwner(admin: SupabaseClient): Promise<string | null> {
@@ -248,16 +261,20 @@ async function generateYoutubeNovelIdeas(
   admin: SupabaseClient,
   experimentSet: Array<Record<string, any>>,
   history: Array<Record<string, any>>,
+  brainGuidance: Record<string, unknown>,
+  requiredHero: string | null,
 ) {
   const { token: gToken, project } = await googleToken(admin);
   const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
     `/locations/${REGION}/publishers/google/models/${MODEL}:generateContent`;
   const forbidden = compactYoutubeHistory(history);
   const referenceContract = experimentSet.map((candidate) => ({
-    reference_id: candidate.reference_source_id,
-    causal_pattern_class: candidate.reference_source_id === "CONTROL"
+    reference_id: candidate.idea_contract_id ?? candidate.reference_source_id,
+    causal_pattern_class: candidate.reference_driven === false
       ? "CONTROL"
       : candidate.causal_pattern?.pattern_class,
+    source_kind: candidate.source_kind,
+    source_label: candidate.source_label,
   }));
   const trendContext = experimentSet.map(formatTrendContext).join("\n\n---\n\n");
   let lastValidationError = "not_started";
@@ -271,10 +288,12 @@ async function generateYoutubeNovelIdeas(
           role: "user",
           parts: [{
             text: `${СТИЛЬ}\n\n` +
-              `Create exactly ${experimentSet.length} NEW YouTube Shorts idea adaptations, one for each ` +
-              `reference contract below. This is attempt ${attempt} of 2.\n\n` +
-              `TRUSTED REFERENCE CONTRACTS (return these IDs and causal_pattern_class values verbatim):\n` +
+              `Create exactly ${experimentSet.length} NEW YouTube Shorts ideas, one for each ` +
+              `idea contract below. This is attempt ${attempt} of 2.\n\n` +
+              `TRUSTED IDEA CONTRACTS (return these IDs and causal_pattern_class values verbatim):\n` +
               `${JSON.stringify(referenceContract)}\n\n${trendContext}\n\n` +
+              `FACTORY BRAIN INPUT (facts stay facts; do not invent missing values):\n` +
+              `${JSON.stringify(brainGuidance)}\n\n` +
               `STRICT NOVELTY CONTRACT:\n` +
               `- Every reference-driven adaptation MUST change character, physical prop, location, ` +
               `money topic, dialogue, visual image and concrete plot.\n` +
@@ -287,6 +306,12 @@ async function generateYoutubeNovelIdeas(
 ` +
               `- CONTROL stays the current Street Economy house format and must not acquire a ` +
               `reference-derived causal mechanism.\n` +
+              `- Use each CONTROL slot's factual source as its topic or tested production lesson. ` +
+              `Do not turn timing/hashtag observations into fictional YouTube algorithm rules.\n` +
+              (requiredHero
+                ? `- LEADING HERO IS LOCKED: animal must be exactly "${requiredHero}" in ALL ideas. ` +
+                  `Only topic, place and prop may vary.\n`
+                : "") +
               `- Each concept must be physically readable in about 10 seconds, vertical 9:16, ` +
               `with one main character, one main prop/mechanism, an immediate visual hook, minimal ` +
               `scene changes and short Russian dialogue.\n` +
@@ -311,7 +336,9 @@ async function generateYoutubeNovelIdeas(
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "{}";
     const generated = JSON.parse(text).ideas ?? [];
     try {
-      return validateYoutubeNovelIdeas(generated, experimentSet, history);
+      return validateYoutubeNovelIdeas(generated, experimentSet, history, {
+        requiredHero,
+      });
     } catch (error) {
       lastValidationError = error instanceof Error ? error.message : String(error);
     }
@@ -487,9 +514,17 @@ async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) 
     .from("creative_identity_map").select("id,creative_id,video_idea_id,youtube_short_row_id")
     .eq("user_id", userId).eq("platform", "youtube_shorts")
     .in("youtube_short_row_id", chunk).range(from, to));
-  const mutations = await collectPages((from, to) => admin.from("creative_mutations")
-    .select("id,parent_creative_id,child_creative_id,changed_variable,mutation_kind,source_hypothesis_id,prior_evidence_experiment_id")
-    .eq("user_id", userId).order("created_at").order("id").range(from, to));
+  let mutations: Array<Record<string, any>> = [];
+  try {
+    mutations = await collectPages((from, to) => admin.from("creative_mutations")
+      .select("id,parent_creative_id,child_creative_id,changed_variable,mutation_kind,source_hypothesis_id,prior_evidence_experiment_id")
+      .eq("user_id", userId).order("created_at").order("id").range(from, to));
+  } catch (error) {
+    // Creative mutation lineage is an optional later layer. Its absence must
+    // not disable the daily analytics -> YouTube idea path.
+    if (!(error && typeof error === "object" &&
+        (error as Record<string, unknown>).code === "PGRST205")) throw error;
+  }
   const [framework, approved, rejected, hypotheses] = await Promise.all([
     admin.from("prompt_framework_versions").select("*,prompt_framework_rules(*)")
       .eq("user_id", userId).eq("is_current", true).maybeSingle(),
@@ -513,6 +548,84 @@ async function loadYoutubeFeedbackInputs(admin: SupabaseClient, userId: string) 
     framework: framework.data ?? null,
     owner_ideas: [...(approved.data ?? []), ...(rejected.data ?? [])],
   };
+}
+
+async function loadYoutubeBrainInputs(admin: SupabaseClient, userId: string) {
+  const [positive, avoided, analytics, tags] = await Promise.all([
+    admin.from("content_lessons")
+      .select("id,lesson,category,status,confidence,applicable_topics,source_platform,source,updated_at")
+      .eq("user_id", userId)
+      .in("category", ["WINNING_PATTERN", "CONFIRMED_LESSON"])
+      .in("status", ["SUPPORTED", "CONFIRMED"])
+      .order("updated_at", { ascending: false }).limit(30),
+    admin.from("content_lessons")
+      .select("id,lesson,category,status,confidence,applicable_topics,source_platform,source,updated_at")
+      .eq("user_id", userId)
+      .eq("category", "FAILED_PATTERN").eq("status", "REJECTED")
+      .order("updated_at", { ascending: false }).limit(30),
+    admin.from("analitika_dnya")
+      .select("id,za_den,otchet,metrics,evidence,created_at")
+      .eq("user_id", userId)
+      .order("za_den", { ascending: false })
+      .order("created_at", { ascending: false }).limit(3),
+    admin.from("tiktok_tegi")
+      .select("teg,rolikov,na_rolik,prosmotrov,sobrano_at")
+      .order("sobrano_at", { ascending: false }).limit(100),
+  ]);
+  for (const result of [positive, avoided, analytics, tags]) {
+    if (result.error) throw result.error;
+  }
+  const sortedTags = [...(tags.data ?? [])].sort((left, right) =>
+    Number(right.na_rolik ?? -1) - Number(left.na_rolik ?? -1));
+  return {
+    positive_lessons: positive.data ?? [],
+    avoided_lessons: avoided.data ?? [],
+    analytics: analytics.data ?? [],
+    tags: sortedTags,
+  };
+}
+
+async function syncYoutubeMarketReferences(
+  admin: SupabaseClient,
+  userId: string,
+  candidates: Array<Record<string, any>>,
+) {
+  const { data: existing, error: existingError } = await admin.from("market_references")
+    .select("id,payload").eq("user_id", userId).eq("platform", "youtube_shorts");
+  if (existingError) throw existingError;
+  const byReference = new Map((existing ?? []).map((row) => [row.payload?.reference_id, row]));
+  for (const candidate of candidates) {
+    const payload = {
+      source_type: "FIXED_V0_1_REFERENCE_LIBRARY",
+      reference_id: candidate.reference_source_id,
+      FACT: {
+        url: candidate.reference_source_url,
+        title: candidate.reference_title,
+        published_at: candidate.reference_published_at,
+        views: candidate.reference_views,
+        vph: candidate.reference_vph,
+        snapshot_at: candidate.reference_snapshot_at,
+      },
+      INFERENCE: {
+        causal_pattern: candidate.causal_pattern,
+        payoff_class: candidate.payoff_class,
+        fidelity_constraints: candidate.critical_fidelity_constraints,
+      },
+      UNKNOWN: candidate.unknown_fields ?? [],
+    };
+    const current = byReference.get(candidate.reference_source_id);
+    const query = current
+      ? admin.from("market_references").update({
+        status: "RESOLVED", owner_disposition: "INTERESTING_MECHANIC", payload,
+        updated_at: new Date().toISOString(),
+      }).eq("id", current.id).eq("user_id", userId)
+      : admin.from("market_references").insert({
+        user_id: userId, platform: "youtube_shorts", status: "RESOLVED",
+        owner_disposition: "INTERESTING_MECHANIC", payload,
+      });
+    const { error } = await query;
+    if (error) throw error;
+  }
 }
 
 async function loadStoredDecision(admin: SupabaseClient, userId: string, platform: string, batchKey: string) {
@@ -560,8 +673,10 @@ Deno.serve(async (req) => {
     const { count: уроков } = await admin.from("content_lessons")
       .select("id", { count: "exact", head: true }).eq("source", "аналитика дня");
     if (!разборов || !уроков) {
+      const brainOwnerId = await configuredOwner(admin);
       const { data: кому } = await admin.from("profiles")
-        .select("error_notify_tg_id").not("error_notify_tg_id", "is", null).limit(1).maybeSingle();
+        .select("error_notify_tg_id").eq("id", brainOwnerId ?? "00000000-0000-0000-0000-000000000000")
+        .maybeSingle();
       const токен = Deno.env.get("TELEGRAM_TEST_BOT_TOKEN");
       if (кому?.error_notify_tg_id && токен) {
         await fetch(`https://api.telegram.org/bot${токен}/sendMessage`, {
@@ -617,12 +732,16 @@ Deno.serve(async (req) => {
     .select("feedback_batch_key,youtube_feedback_batch_key")
     .limit(1);
   const feedbackSchemaReady = !feedbackSchemaError;
+  // Deploying the shared provenance columns must not silently switch TikTok
+  // to the experimental feedback generator. Its existing production branch
+  // stays byte-for-byte active unless a separate rollout explicitly enables it.
+  const tiktokFeedbackEnabled = false;
   let feedbackContext: Awaited<ReturnType<typeof buildTikTokFeedbackContext>> | null = null;
   let marketIdeaContext: Awaited<ReturnType<typeof buildTikTokMarketIdeaContext>> | null = null;
   let batchKey: string | null = null;
   let youtubeFeedbackContext: Awaited<ReturnType<typeof buildYoutubeFeedbackContext>> | null = null;
   let youtubeBatchKeyValue: string | null = null;
-  if (feedbackSchemaReady && targetPlatform === TARGET_PLATFORMS.TIKTOK) {
+  if (feedbackSchemaReady && tiktokFeedbackEnabled && targetPlatform === TARGET_PLATFORMS.TIKTOK) {
     batchKey = await feedbackBatchKey(profile.id, requestId);
     if (!previewOnly) {
       const replay = await loadStoredDecision(admin, profile.id, targetPlatform, batchKey);
@@ -642,7 +761,7 @@ Deno.serve(async (req) => {
     }
   }
   const evaluationAt = new Date().toISOString();
-  if (feedbackSchemaReady && targetPlatform === TARGET_PLATFORMS.TIKTOK) {
+  if (feedbackSchemaReady && tiktokFeedbackEnabled && targetPlatform === TARGET_PLATFORMS.TIKTOK) {
     const feedbackInputs = await loadTikTokFeedbackInputs(admin, profile.id);
     feedbackContext = await buildTikTokFeedbackContext({
       ...feedbackInputs,
@@ -671,27 +790,52 @@ Deno.serve(async (req) => {
 
   let ideas: Array<Record<string, any>> = [];
   let experimentSet: Array<Record<string, unknown>> = [];
+  let youtubeBrainGuidance: Record<string, unknown> = {};
   let ideaSource = "existing-gemini";
+  let youtubeInputPhase = "not_started";
   try {
     if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
+      youtubeInputPhase = "youtube_reference_metadata";
       const candidates = await fetchYoutubeTrendCandidates({
         apiKey: Deno.env.get("YOUTUBE_API_KEY"),
       });
-      experimentSet = selectYoutubeExperimentSet(candidates, count);
+      if (!previewOnly) {
+        youtubeInputPhase = "market_reference_sync";
+        await syncYoutubeMarketReferences(admin, profile.id, candidates);
+      }
+      youtubeInputPhase = "factory_brain_inputs";
+      const brainInputs = await loadYoutubeBrainInputs(admin, profile.id);
+      const brain = buildYoutubeIdeaBrain({
+        references: candidates,
+        history: youtubeHistory,
+        ...brainInputs,
+        count,
+        hero: profile.vedushchiy_geroy,
+      });
+      experimentSet = brain.contracts;
+      youtubeBrainGuidance = brain.guidance;
       if (feedbackSchemaReady) {
+        youtubeInputPhase = "youtube_feedback_inputs";
         const youtubeInputs = await loadYoutubeFeedbackInputs(admin, profile.id);
+        youtubeInputPhase = "youtube_feedback_context";
         youtubeFeedbackContext = await buildYoutubeFeedbackContext({
           ...youtubeInputs, market_references: experimentSet, evaluation_at: evaluationAt,
         });
       }
     }
   } catch (e) {
-    return json(500, { error: `Trend input недоступен: ${e instanceof Error ? e.message : String(e)}` });
+    return json(500, { error: `Trend input недоступен (${youtubeInputPhase}): ${safeError(e)}` });
   }
 
   if (targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS) {
     try {
-      ideas = await generateYoutubeNovelIdeas(admin, experimentSet, youtubeHistory);
+      ideas = await generateYoutubeNovelIdeas(
+        admin,
+        experimentSet,
+        youtubeHistory,
+        youtubeBrainGuidance,
+        typeof profile.vedushchiy_geroy === "string" ? profile.vedushchiy_geroy.trim() : null,
+      );
     } catch (e) {
       // Never fall back to the already delivered fixed five. An explicit error
       // is safer than silently sending the same cards for the sixteenth time.
@@ -757,7 +901,7 @@ Deno.serve(async (req) => {
       line: idea.line,
       prompt: idea.prompt,
       target_platform: targetPlatform,
-      ...(targetPlatform === TARGET_PLATFORMS.TIKTOK && feedbackSchemaReady
+      ...(targetPlatform === TARGET_PLATFORMS.TIKTOK && feedbackSchemaReady && tiktokFeedbackEnabled
         ? {
           why_this_idea: idea.why_this_idea ?? null,
           idea_pattern: idea.idea_pattern ?? null,
@@ -782,7 +926,7 @@ Deno.serve(async (req) => {
         ? {
           ...trustedIdeaMetadata(candidate),
           ...(feedbackSchemaReady ? {
-            market_reference_ids: idea.market_reference_ids ?? [idea.reference_id],
+            market_reference_ids: idea.market_reference_ids ?? [idea.source_key ?? idea.reference_id],
             selected_lesson_ids: idea.selected_lesson_ids ?? [],
             avoided_lesson_ids: idea.avoided_lesson_ids ?? [],
             own_experiment_ids: idea.own_experiment_ids ?? [],
@@ -790,7 +934,7 @@ Deno.serve(async (req) => {
               ? idea.changed_variable ?? null : null,
             experiment_constants: idea.evidence_mode === "OWN_PERFORMANCE_BOUND"
               ? idea.experiment_constants ?? null : null,
-            why_this_idea: idea.why_this_idea ?? null,
+            why_this_idea: idea.source_label ?? idea.why_this_idea ?? null,
             idea_pattern: `${idea.reference_id ?? "CONTROL"}|${idea.slug}`,
             evidence_roots: idea.evidence_roots ?? [],
             evidence_conflicts: idea.evidence_conflicts ?? [],
@@ -810,6 +954,7 @@ Deno.serve(async (req) => {
       target_platform: targetPlatform,
       ideas: rows.map((row) => ({
         slug: row.slug,
+        animal: row.animal,
         hook: row.hook,
         line: row.line,
         target_platform: row.target_platform,

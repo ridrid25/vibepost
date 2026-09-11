@@ -299,12 +299,15 @@ export function selectYoutubeExperimentSet(candidates, count = 5) {
 }
 
 export function formatTrendContext(candidate) {
-  if (candidate.reference_source_id === "CONTROL") {
+  if (candidate.reference_driven === false ||
+      String(candidate.reference_source_id ?? "").startsWith("CONTROL")) {
     return [
-      "REFERENCE_ID: CONTROL",
+      `REFERENCE_ID: ${candidate.idea_contract_id ?? candidate.reference_source_id ?? "CONTROL"}`,
       "FACT: no external reference is used",
+      `FACTUAL IDEA SOURCE: ${JSON.stringify(candidate.source_context ?? {})}`,
+      `OWNER-VISIBLE SOURCE LABEL: ${candidate.source_label ?? "текущий формат"}`,
       "INFERENCE: none",
-      "UNKNOWN: not applicable",
+      "UNKNOWN: facts not present in the source context remain unknown",
       "CONSTRAINT: preserve the current Street Economy house format without a reference-derived causal mechanism",
     ].join("\n");
   }
@@ -336,7 +339,8 @@ export function formatTrendContext(candidate) {
 }
 
 export function trustedIdeaMetadata(candidate) {
-  if (!candidate || candidate.reference_source_id === "CONTROL") {
+  if (!candidate || candidate.reference_driven === false ||
+      String(candidate.reference_source_id ?? "").startsWith("CONTROL")) {
     return {
       trend_signal: null,
       reference_source_id: null,
