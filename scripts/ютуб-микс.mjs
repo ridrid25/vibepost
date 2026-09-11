@@ -34,7 +34,7 @@ const hj = { ...h, 'Content-Type': 'application/json' };
 
 const строки = await (await fetch(
   `${url}/rest/v1/youtube_publish_queue?status=eq.draft&chosen_candidate_id=not.is.null` +
-  `&select=id,title,storage_bucket,storage_path,chosen_candidate_id,music_storage_path` +
+  `&select=id,title,storage_bucket,storage_path,chosen_candidate_id,music_storage_path,scheduled_at` +
   `&order=updated_at.asc`,
   { headers: h },
 )).json();
@@ -101,7 +101,9 @@ for (const р of работа) {
     execFileSync('ffmpeg', [
       '-y', '-i', видео, '-stream_loop', '-1', '-i', музыка,
       '-filter_complex',
-      `[1:a]volume=0.2,afade=t=out:st=${затухание}:d=1.2[m];` +
+      // 0.2 было неслышно на телефоне (жалоба 30.08: «все без музыки») —
+      // музыка должна читаться фоном, ~6-8 дБ под речью.
+      `[1:a]volume=0.7,afade=t=out:st=${затухание}:d=1.2[m];` +
       `[0:a][m]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`,
       '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
       выход,
@@ -115,7 +117,15 @@ for (const р of работа) {
     });
     if (!залив.ok) throw new Error(`заливка: ${залив.status}`);
 
-    слот = следующийСлот(слот);
+    // Если заказчица назначила ролику своё время и оно в будущем — держим его,
+    // хвост расписания только для роликов без срока.
+    const своёВремя = new Date(р.scheduled_at ?? 0);
+    if (своёВремя > new Date()) {
+      var слотРолика = своёВремя;
+    } else {
+      слот = следующийСлот(слот);
+      слотРолика = слот;
+    }
     const патч = await fetch(`${url}/rest/v1/youtube_publish_queue?id=eq.${р.id}`, {
       method: 'PATCH', headers: hj,
       body: JSON.stringify({
@@ -123,7 +133,7 @@ for (const р of работа) {
         music_storage_path: р.отрывок.storage_path,
         music_mixed_at: new Date().toISOString(),
         status: 'scheduled',
-        scheduled_at: слот.toISOString(),
+        scheduled_at: слотРолика.toISOString(),
         updated_at: new Date().toISOString(),
       }),
     });

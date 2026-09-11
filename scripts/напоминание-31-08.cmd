@@ -1,0 +1,4 @@
+@echo off
+cd /d "%~dp0.."
+node -e "const fs=require('fs');const env={};for(const l of fs.readFileSync('.env','utf8').split(/\r?\n/)){const m=l.match(/^([A-Za-z_0-9]+)=(.*)$/);if(m)env[m[1]]=m[2].trim()}fetch('https://api.telegram.org/bot'+env.TELEGRAM_TEST_BOT_TOKEN+'/sendMessage',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:Number(env.ERROR_NOTIFY_TG_ID),text:'Напоминание: доделать кнопочки в Lovable - просмотр ролика по ссылке видео, карандаш (изменить время) и корзина (удалить) в ленте Все посты. Промт готов у Claude - откройте сессию и скажите: давай кнопочки. И второе дело: умная приставка в VibePost - после заголовка и транскрипции завод предлагает варианты описания и хэштегов на выбор.'})})"
+schtasks /Delete /TN "VibePost - напоминание-кнопочки" /F
