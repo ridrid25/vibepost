@@ -80,6 +80,7 @@ type Ролик = {
   тема: string;
   тип_хука: string;
   замер: number | null;
+  схема: string;
   взлетел: boolean;
 };
 
@@ -125,7 +126,7 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
   const { data: ideas } = await admin.from("video_ideas")
     .select("id, animal, hook, line").eq("user_id", uid);
   const { data: cards } = await admin.from("incoming_videos")
-    .select("id, name, hook, measure_avg").eq("user_id", uid);
+    .select("id, name, hook, measure_avg, shema_dvizheniya").eq("user_id", uid);
 
   const поИдее = new Map((ideas ?? []).map((i) => [i.id as string, i]));
   const поКарточке = new Map((cards ?? []).map((c) => [c.id as string, c]));
@@ -175,6 +176,10 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
       тема: темаТекста(всё),
       тип_хука: хук ? типХука(хук) : "хук не определён",
       замер: карточка?.measure_avg == null ? null : Number(карточка.measure_avg),
+      // Схема движения: чем снят ролик. Заказчица 22.09 руками запретила бригаде
+      // бег на камеру, и просмотры выросли с 9 до 1200 — решает схема, а мерили
+      // мы темы и часы. Считаем, но генератору пока не отдаём: сперва цифры.
+      схема: (карточка?.shema_dvizheniya as string) ?? "схема не определена",
       взлетел: views >= порог,
     };
   });
@@ -436,6 +441,7 @@ Deno.serve(async (req) => {
     тема: срез(ролики, "тема", (р) => р.тема),
     тип_хука: срез(ролики, "тип хука", (р) => р.тип_хука),
     час: срез(ролики, "час выхода", (р) => `${р.час_выхода}:00`),
+    схема: срез(ролики, "схема движения", (р) => р.схема),
     замер: срез(ролики, "замер", (р) =>
       р.замер == null ? "не мерян" : р.замер >= 18 ? "18 и выше" : "ниже 18"),
   };
@@ -692,6 +698,7 @@ function strokiGodnye(
 function podpis(поле: string): string {
   if (поле === "тема") return "Тема";
   if (поле === "тип_хука") return "Хук в кадре";
+  if (поле === "схема") return "Схема движения";
   if (поле === "час") return "Час выхода";
   return "Замер динамики";
 }
