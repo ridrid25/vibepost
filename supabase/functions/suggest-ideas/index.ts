@@ -250,14 +250,25 @@ function зверьИзИмени(имя: string): string {
  * разбор пишет «рыба-продавец», а в листке стоит «Сельдь» (из 69 готовых
  * роликов связаны 18). Имя карточки есть всегда.
  */
-async function зверивОтдыхе(admin: SupabaseClient, userId: string): Promise<string[]> {
+async function зверивОтдыхе(
+  admin: SupabaseClient,
+  userId: string,
+  targetPlatform: string,
+): Promise<string[]> {
   const ОТДЫХ_ДНЕЙ = 10;
   const рубеж = new Date(Date.now() - ОТДЫХ_ДНЕЙ * 86400000).toISOString();
   const отдыхают = new Set<string>();
 
+  // Строго своя площадка. ТикТок и YouTube — разные ленты и разные зрители;
+  // ролик, снятый для одной, другую ничем не занимает. 23.09.2026 заказчица:
+  // «ТикТок и Ютуб — это разные вещи, проверь, чтобы ты их в одну кучу опять
+  // не свалила». У неё на YouTube задан ведущий герой (Гиена) и снимается
+  // серия про него — если бы отдых считался общим, ютубовские гиены закрыли
+  // бы гиену в ТикТоке, и наоборот.
   const { data: готовые } = await admin.from("incoming_videos")
     .select("name,ready_at")
-    .eq("user_id", userId).eq("ready", true).gte("ready_at", рубеж);
+    .eq("user_id", userId).eq("ready", true).gte("ready_at", рубеж)
+    .eq("target_platform", targetPlatform);
   for (const к of готовые ?? []) {
     const зверь = зверьИзИмени(к.name);
     if (зверь.length > 2) отдыхают.add(зверь);
@@ -266,12 +277,18 @@ async function зверивОтдыхе(admin: SupabaseClient, userId: string): 
     // а не три её роли по отдельности — иначе завод завтра предложит просто
     // «Гиену» и она снова замелькает.
     const вид = зверь.split(/\s+/)[0].trim();
-    if (вид.length > 3 && вид !== зверь) отдыхают.add(вид);
+    // Первое слово берём только если это само название вида. «Гиена с чеком»
+    // → «Гиена», а «Морской слизень» и «Золотая рыбка» остаются целиком:
+    // отрезанное прилагательное («Морской», «Золотая») — не зверь, и модель
+    // от такой строки в списке только запутается.
+    const прилагательное = /(ый|ий|ой|ая|яя|ое|ее)$/i.test(вид);
+    if (вид.length > 3 && вид !== зверь && !прилагательное) отдыхают.add(вид);
   }
 
   const { data: вРаботе } = await admin.from("video_ideas")
     .select("animal")
     .eq("user_id", userId).eq("status", "approved").eq("route", "self")
+    .eq("target_platform", targetPlatform)
     .is("otrabotana_at", null).gte("decided_at", рубеж);
   for (const и of вРаботе ?? []) {
     const зверь = String(и.animal ?? "").trim();
@@ -838,7 +855,12 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
   // навсегда и на всех: из 408 запрещённых зверей 341 просто мелькнул в
   // непрочитанных пачках — она их в глаза не видела, а кошка, волк и лиса
   // уже выбыли. Каждый прогон кнопки «Идеи» сжигал пятерых ради одного.
-  const занятые = await зверивОтдыхе(admin, profile.id);
+  // Только для ТикТока. На YouTube зверя выбирает не завод, а кнопка «Герой
+  // серии»: там идёт серия про одного героя, и «отдых зверя» её бы сломал —
+  // генератор обязан ставить ровно заданного героя в каждую идею.
+  const занятые = targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS
+    ? []
+    : await зверивОтдыхе(admin, profile.id, targetPlatform);
   const youtubeHistory = targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS ? (былые ?? []) : [];
 
   let ideas: Array<Record<string, any>> = [];
