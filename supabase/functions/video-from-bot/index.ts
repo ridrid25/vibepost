@@ -310,9 +310,16 @@ Deno.serve(async (req) => {
     // кадре, и берём ту её идею, где этот зверь и есть: тема и реплика
     // подтягиваются свои.
     if (!idea && зверьВКадре) {
+      // Только те листки, по которым ролика ещё не было. Отработанные гасит
+      // кнопка «Готово» во Входящих (otrabotana_at). 23.09.2026 заказчица:
+      // «зачем он смотрит на шестьдесят? Он у меня до пенсии будет сеть
+      // искать?» — и была права: в списке висели идеи от 8 августа, и 24 из
+      // 60 уже со снятым роликом. Короткий свежий список — это ровно то, что
+      // она держит в уме, когда присылает файл.
       const { data: взятые } = await admin.from("video_ideas").select(ideaSelect)
         .eq("user_id", profile.id).eq("status", "approved").eq("route", "self")
-        .order("decided_at", { ascending: false }).limit(60);
+        .is("otrabotana_at", null)
+        .order("decided_at", { ascending: false }).limit(25);
       const вКадре = зверьВКадре.toLowerCase();
       const слова = вКадре.split(/[\s,.:;—-]+/).filter((с) => с.length > 2);
       idea = (взятые ?? []).find((и) => {
