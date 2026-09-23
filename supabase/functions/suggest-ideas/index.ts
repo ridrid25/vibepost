@@ -236,6 +236,51 @@ async function configuredOwner(admin: SupabaseClient): Promise<string | null> {
     ? data : null;
 }
 
+/** Имя вида из названия карточки: «Сельдь — КОПИТЬ ИЛИ ЖИТЬ» → «Сельдь». */
+function зверьИзИмени(имя: string): string {
+  return String(имя ?? "").split(/\s[—–-]\s/)[0].trim();
+}
+
+/**
+ * Кого сейчас не предлагать. Две причины отдыхать, обе временные:
+ *   1. ролик готов (кнопка «Готово») — 10 дней с момента нажатия;
+ *   2. листок взят кнопкой и ролика по нему ещё нет — он прямо сейчас в работе.
+ *
+ * Зверя берём из имени карточки, а не из связанной идеи: связь ломается, когда
+ * разбор пишет «рыба-продавец», а в листке стоит «Сельдь» (из 69 готовых
+ * роликов связаны 18). Имя карточки есть всегда.
+ */
+async function зверивОтдыхе(admin: SupabaseClient, userId: string): Promise<string[]> {
+  const ОТДЫХ_ДНЕЙ = 10;
+  const рубеж = new Date(Date.now() - ОТДЫХ_ДНЕЙ * 86400000).toISOString();
+  const отдыхают = new Set<string>();
+
+  const { data: готовые } = await admin.from("incoming_videos")
+    .select("name,ready_at")
+    .eq("user_id", userId).eq("ready", true).gte("ready_at", рубеж);
+  for (const к of готовые ?? []) {
+    const зверь = зверьИзИмени(к.name);
+    if (зверь.length > 2) отдыхают.add(зверь);
+    // Имя карточки часто с довеском: «Гиена с чеком», «Гиена на самолёте»,
+    // «Обезьяна крупье». Это одна и та же гиена, и отдыхать должна она сама,
+    // а не три её роли по отдельности — иначе завод завтра предложит просто
+    // «Гиену» и она снова замелькает.
+    const вид = зверь.split(/\s+/)[0].trim();
+    if (вид.length > 3 && вид !== зверь) отдыхают.add(вид);
+  }
+
+  const { data: вРаботе } = await admin.from("video_ideas")
+    .select("animal")
+    .eq("user_id", userId).eq("status", "approved").eq("route", "self")
+    .is("otrabotana_at", null).gte("decided_at", рубеж);
+  for (const и of вРаботе ?? []) {
+    const зверь = String(и.animal ?? "").trim();
+    if (зверь.length > 2) отдыхают.add(зверь);
+  }
+
+  return [...отдыхают];
+}
+
 async function loadPlatformIdeaHistory(
   admin: SupabaseClient,
   userId: string,
@@ -785,7 +830,15 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
   } catch {
     return json(500, { error: "Не удалось проверить историю уже показанных идей" });
   }
-  const занятые = [...new Set((былые ?? []).map((r) => r.animal).filter(Boolean))];
+  // Зверь отдыхает 10 дней после готового ролика — и только после готового.
+  //
+  // 23.09.2026 заказчица: «если ролик готов, то он должен считать, что этот
+  // зверь использовался, и в ближайшие 10 дней его не предлагают. А потом
+  // пускай этот запрет снимается, вот и всё». До этого дня запрет стоял
+  // навсегда и на всех: из 408 запрещённых зверей 341 просто мелькнул в
+  // непрочитанных пачках — она их в глаза не видела, а кошка, волк и лиса
+  // уже выбыли. Каждый прогон кнопки «Идеи» сжигал пятерых ради одного.
+  const занятые = await зверивОтдыхе(admin, profile.id);
   const youtubeHistory = targetPlatform === TARGET_PLATFORMS.YOUTUBE_SHORTS ? (былые ?? []) : [];
 
   let ideas: Array<Record<string, any>> = [];
@@ -860,7 +913,7 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
             role: "user",
             parts: [{
               text: `${СТИЛЬ}\n\nПридумай ${count} новых идей.\n` +
-                (занятые.length ? `Этих зверей уже использовали, не повторяйся: ${занятые.join(", ")}.\n` : "") +
+                (занятые.length ? `Эти звери сейчас отдыхают, их не бери: ${занятые.join(", ")}. Всех остальных можно, в том числе тех, кто был раньше.\n` : "") +
                 `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
                 `без морали и без объяснений шутки.\n\n` +
                 (feedbackContext ? formatTikTokFeedbackPromptContext(feedbackContext) : "") +

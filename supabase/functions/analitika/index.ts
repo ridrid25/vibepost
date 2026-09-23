@@ -81,6 +81,7 @@ type Ролик = {
   тип_хука: string;
   замер: number | null;
   схема: string;
+  зверь: string;
   взлетел: boolean;
 };
 
@@ -109,6 +110,17 @@ function срез(
     .sort((a, b) => b.медиана - a.медиана);
 }
 
+/**
+ * Имя вида из названия карточки: «Сельдь — КОПИТЬ ИЛИ ЖИТЬ» → «Сельдь».
+ * Довесок роли отбрасываем: «Гиена с чеком» и «Гиена на самолёте» — одна гиена,
+ * иначе каждый зверь окажется в срезе по одному ролику и вывода не будет.
+ */
+function зверьИзИмени(имя: unknown): string {
+  const целиком = String(имя ?? "").split(/\s[—–-]\s/)[0].trim();
+  const вид = целиком.split(/\s+/)[0].trim();
+  return (вид.length > 3 ? вид : целиком).toLowerCase();
+}
+
 /** Заголовок ролика к сравнимому виду: без регистра, знаков и лишних пробелов. */
 function ключТекста(t: string): string {
   return (t || "").toLowerCase().replace(/[^a-zа-яё0-9 ]+/gi, " ").replace(/\s+/g, " ").trim();
@@ -126,7 +138,7 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
   const { data: ideas } = await admin.from("video_ideas")
     .select("id, animal, hook, line").eq("user_id", uid);
   const { data: cards } = await admin.from("incoming_videos")
-    .select("id, name, hook, measure_avg, shema_dvizheniya").eq("user_id", uid);
+    .select("id, name, hook, measure_avg, shema_dvizheniya, tag").eq("user_id", uid);
 
   const поИдее = new Map((ideas ?? []).map((i) => [i.id as string, i]));
   const поКарточке = new Map((cards ?? []).map((c) => [c.id as string, c]));
@@ -180,6 +192,10 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
       // бег на камеру, и просмотры выросли с 9 до 1200 — решает схема, а мерили
       // мы темы и часы. Считаем, но генератору пока не отдаём: сперва цифры.
       схема: (карточка?.shema_dvizheniya as string) ?? "схема не определена",
+      // Кто в кадре. 23.09.2026 заказчица: «он не ведёт статистику по зверю,
+      // а просто по тематике — я бы добавила, чтобы звери-тематика тоже».
+      зверь: зверьИзИмени(карточка?.name) || String(идея?.animal ?? "").toLowerCase() ||
+        зверьИзИмени(карточка?.tag) || "зверь не определён",
       взлетел: views >= порог,
     };
   });
@@ -195,6 +211,34 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
  * Поэтому смотрим не только «сколько получилось», но и с какого уровня
  * репостов ролик начинает набирать.
  */
+/**
+ * Кто в кадре у тиктоковского ролика. В самом ТикТоке зверь нигде не записан:
+ * оттуда приходят только просмотры и текст описания. Но описание заказчица
+ * копирует из карточки — по первой его строке (шутке) ролик и узнаётся.
+ * Связь по idea_id тут не годится: из 69 готовых роликов с листком связаны 18.
+ */
+async function зверипоОписаниям(
+  admin: SupabaseClient,
+  uid: string,
+): Promise<Map<string, string>> {
+  const { data } = await admin.from("incoming_videos")
+    .select("name, tag, post_description, description_options").eq("user_id", uid);
+  const карта = new Map<string, string>();
+  for (const к of data ?? []) {
+    const зверь = зверьИзИмени(к.name) || зверьИзИмени(к.tag);
+    if (зверь.length < 3) continue;
+    const тексты = [к.post_description, ...(Array.isArray(к.description_options) ? к.description_options : [])];
+    for (const т of тексты) {
+      if (!т) continue;
+      const шутка = String(т).split(/[\r\n]+/).map((с) => с.trim())
+        .find((с) => с && !с.startsWith("#"));
+      const ключ = ключТекста(шутка ?? "");
+      if (ключ.length > 12 && !карта.has(ключ)) карта.set(ключ, зверь);
+    }
+  }
+  return карта;
+}
+
 async function тиктокРазбор(admin: SupabaseClient, uid: string) {
   // Тянем не весь raw_payload: там лежит embed_html, и на паре тысяч строк
   // функция падала с Internal Server Error. Берём только нужные поля.
@@ -207,6 +251,8 @@ async function тиктокРазбор(admin: SupabaseClient, uid: string) {
     .eq("user_id", uid).order("captured_at", { ascending: false }).limit(3000);
   if (error) throw new Error(`тикток: ${error.message}`);
   if (!data?.length) return null;
+
+  const звери = await зверипоОписаниям(admin, uid);
 
   const свежие = new Map<string, Record<string, unknown>>();
   for (const строка of data) {
@@ -227,6 +273,7 @@ async function тиктокРазбор(admin: SupabaseClient, uid: string) {
       час: мск.getUTCHours(),
       день: ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][мск.getUTCDay()],
       текст: String(p.title ?? p.video_description ?? ""),
+      зверь: звери.get(ключТекста(String(p.title ?? p.video_description ?? ""))) ?? null,
     };
   }).filter((р) => р.views > 0);
 
@@ -287,6 +334,8 @@ async function тиктокРазбор(admin: SupabaseClient, uid: string) {
     репостов_всего: ролики.reduce((с, р) => с + р.shares, 0),
     срезы: [
       режем("Тема", (р) => темаТекста(р.текст)),
+      режем("Зверь", (р) => р.зверь),
+      режем("Зверь и тема", (р) => (р.зверь ? `${р.зверь} · ${темаТекста(р.текст)}` : null)),
       режем("Длина ролика", (р) =>
         р.длина <= 0 ? null : р.длина <= 10 ? "до 10 секунд" : р.длина <= 15 ? "11-15 секунд" : "16 секунд и длиннее"),
       режем("Час выхода в ТикТоке", (р) => `${String(р.час).padStart(2, "0")}:00`),
@@ -442,6 +491,8 @@ Deno.serve(async (req) => {
     тип_хука: срез(ролики, "тип хука", (р) => р.тип_хука),
     час: срез(ролики, "час выхода", (р) => `${р.час_выхода}:00`),
     схема: срез(ролики, "схема движения", (р) => р.схема),
+    зверь: срез(ролики, "зверь", (р) => р.зверь),
+    зверь_и_тема: срез(ролики, "зверь и тема", (р) => `${р.зверь} · ${р.тема}`),
     замер: срез(ролики, "замер", (р) =>
       р.замер == null ? "не мерян" : р.замер >= 18 ? "18 и выше" : "ниже 18"),
   };
