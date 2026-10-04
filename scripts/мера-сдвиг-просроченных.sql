@@ -1,4 +1,5 @@
--- Мера против залпа просроченных постов. Готова сменой 85 (04.10.2026 19:05 МСК).
+-- Мера против залпа просроченных постов. Готова сменой 85 (04.10.2026 19:05 МСК),
+-- переписана на универсальный шаг сменой 91 (05.10.2026 02:05 МСК).
 -- НЕ ПРИМЕНЯТЬ без прямого слова заказчицы: это сдвиг её расписания.
 --
 -- Зачем: в claim_due_posts нет отсечки по давности, в process-scheduler
@@ -8,38 +9,102 @@
 --
 -- Запуск: через управляющий API, POST /v1/projects/<ref>/database/query,
 -- по одному шагу. REST мёртв под 402, задания.mjs и scripts через него не пройдут.
+--
+-- ВАЖНО, находка смены 89 и ответ на неё (смена 91): прежний шаг «+12 дней»
+-- имел срок годности. Он был посчитан под 04.10, и с 11.10 ломался: самый старый
+-- просроченный (29.09 06:30 UTC) плюс 12 дней = 11.10 06:30 UTC, то есть первый же
+-- сдвинутый пост снова оказывался в прошлом (11.10 → 1 просроченный, 12.10 → 2,
+-- 15.10 → 5). Шаг 3 ниже от даты запуска не зависит вовсе — он считает сдвиг для
+-- каждого поста сам, от последнего занятого слота. Пересчитывать его не нужно
+-- ни 11.10, ни позже.
 
--- ШАГ 1. Что сдвинется (только чтение). Ожидание на 04.10: 6 строк, claimed пусто.
-select id, scheduled_at, scheduled_at + interval $$12 days$$ as new_at, claimed_at
-from posts where status = $$scheduled$$ and scheduled_at < now() order by scheduled_at;
+-- ШАГ 0. Снимок расписания перед сдвигом — это и есть откат.
+-- Делать ОБЯЗАТЕЛЬНО: шаг 3 сдвигает каждый пост на своё число дней, и плоского
+-- «минус столько же» для него не существует.
+create table if not exists posts_slots_backup_91 as
+select id, scheduled_at from posts where status = $$scheduled$$;
+select count(*) saved from posts_slots_backup_91;
+
+-- ШАГ 1. Что сдвинется (только чтение). На 05.10 02:05 МСК — 6 строк, claimed пусто.
+with ov as (
+  select id, scheduled_at, row_number() over (order by scheduled_at) rn
+  from posts where status = $$scheduled$$ and scheduled_at < now()
+), a as (
+  select greatest(max(scheduled_at), now()) m from posts where status = $$scheduled$$
+)
+select ov.id,
+       to_char(ov.scheduled_at at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) old_slot,
+       to_char(ov.scheduled_at
+         + ((ceil(extract(epoch from (a.m - ov.scheduled_at)) / 86400.0)::int + ov.rn) || $$ days$$)::interval
+         at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) new_slot
+from ov, a order by ov.scheduled_at;
 
 -- ШАГ 2. Наложения (только чтение). Применять ТОЛЬКО если вернулось ноль строк.
-select a.scheduled_at as src, b.scheduled_at as dst
-from posts a join posts b
-  on b.scheduled_at = a.scheduled_at + interval $$12 days$$ and b.status = $$scheduled$$
-where a.status = $$scheduled$$ and a.scheduled_at < now();
+-- Шаг 3 кладёт посты строго ПОСЛЕ последнего занятого слота, по одному в день,
+-- поэтому наложений быть не должно по построению — проверка страховочная.
+with ov as (
+  select id, scheduled_at, row_number() over (order by scheduled_at) rn
+  from posts where status = $$scheduled$$ and scheduled_at < now()
+), a as (
+  select greatest(max(scheduled_at), now()) m from posts where status = $$scheduled$$
+), nw as (
+  select ov.id, ov.scheduled_at
+    + ((ceil(extract(epoch from (a.m - ov.scheduled_at)) / 86400.0)::int + ov.rn) || $$ days$$)::interval new_at
+  from ov, a
+)
+select nw.id, nw.new_at, p.id collided_with
+from nw join posts p on p.scheduled_at = nw.new_at and p.status = $$scheduled$$ and p.id <> nw.id;
 
--- ШАГ 3. Сдвиг. Шаг 12 дней подобран так, чтобы просроченные встали ПОСЛЕ
--- последнего занятого слота, по одному в день, без разрывов и наложений.
--- На 04.10: шесть постов 29.09-04.10 уходят в 11.10-16.10, за последним занятым 10.10.
-update posts set scheduled_at = scheduled_at + interval $$12 days$$
-where status = $$scheduled$$ and scheduled_at < now()
-returning id, scheduled_at;
+-- ШАГ 3. Сдвиг. Срока годности нет: сдвиг для каждого поста считается от
+-- последнего занятого слота (или от now(), если будущих постов не осталось),
+-- целым числом суток — время суток 09:30 МСК сохраняется точно.
+with ov as (
+  select id, scheduled_at, row_number() over (order by scheduled_at) rn
+  from posts where status = $$scheduled$$ and scheduled_at < now()
+), a as (
+  select greatest(max(scheduled_at), now()) m from posts where status = $$scheduled$$
+)
+update posts p
+set scheduled_at = p.scheduled_at
+  + ((ceil(extract(epoch from (a.m - p.scheduled_at)) / 86400.0)::int + ov.rn) || $$ days$$)::interval
+from ov, a
+where p.id = ov.id
+returning p.id, to_char(p.scheduled_at at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) new_slot;
 
--- ШАГ 4. Проверка: просроченных должно остаться ноль.
-select count(*) as overdue from posts where status = $$scheduled$$ and scheduled_at < now();
+-- ШАГ 4. Проверка: просроченных должно остаться ноль, всего столько же, по одному в день.
+select count(*) total, count(*) filter (where scheduled_at < now()) overdue
+from posts where status = $$scheduled$$;
+select to_char(scheduled_at at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) slot
+from posts where status = $$scheduled$$ order by scheduled_at;
 
--- ОТКАТ (если сдвинули зря). Берёт только те, что сдвигали — по списку id из шага 3.
--- Вставить id вместо <id1>,... Без списка откат зацепит и чужие будущие посты.
-update posts set scheduled_at = scheduled_at - interval $$12 days$$
-where status = $$scheduled$$ and id in ($$<id1>$$::uuid, $$<id2>$$::uuid)
-returning id, scheduled_at;
+-- ОТКАТ. Возвращает ровно те значения, что были до шага 3, из снимка шага 0.
+update posts p set scheduled_at = b.scheduled_at
+from posts_slots_backup_91 b
+where p.id = b.id and p.scheduled_at <> b.scheduled_at
+returning p.id, to_char(p.scheduled_at at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) back_to;
+-- После удачного отката снимок можно убрать:
+-- drop table posts_slots_backup_91;
 
--- Список id, сдвигаемых на 04.10 19:05 МСК (если ШАГ 1 вернёт их же — список актуален):
---   1037e5f1-3671-4697-9c1e-745d8f4d8d5f  29.09 06:30 UTC
---   b2cab296-837e-4afc-af60-3197f5269ba0  30.09 06:30 UTC
---   acbb902c-5151-4344-9b20-cbb06d23c019  01.10 06:30 UTC
---   e0b6603f-2f3d-4583-91f0-98fa0de49e6e  02.10 06:30 UTC
---   391039b4-9bce-4e70-b4c5-ee6874a3d3c9  03.10 06:30 UTC
---   f0145ee7-617b-4cff-b9b7-a856e7faa496  04.10 06:30 UTC
--- Каждый день без оплаты список растёт на одну строку (слот 09:30 МСК).
+-- ПРОВЕРЕНО смены 91 (05.10 02:05 МСК) на живых данных, целиком внутри
+-- begin ... rollback, то есть виден результат, а не прогноз:
+--   запуск сегодня          → 12 постов цепочкой 05.10-16.10, просроченных 0
+--   запуск 15.10 (симуляция, все 12 просрочены) → цепочка 17.10-28.10, просроченных 0
+-- После откатов в базе без изменений: всего 12, просроченных 6.
+
+-- Расписание на 05.10 02:05 МСК (ШАГ 1 должен вернуть первые шесть):
+--   ПРОСРОЧЕНЫ
+--   1037e5f1-3671-4697-9c1e-745d8f4d8d5f  2026-09-29 06:30:00+00
+--   b2cab296-837e-4afc-af60-3197f5269ba0  2026-09-30 06:30:00+00
+--   acbb902c-5151-4344-9b20-cbb06d23c019  2026-10-01 06:30:00+00
+--   e0b6603f-2f3d-4583-91f0-98fa0de49e6e  2026-10-02 06:30:00+00
+--   391039b4-9bce-4e70-b4c5-ee6874a3d3c9  2026-10-03 06:30:00+00
+--   f0145ee7-617b-4cff-b9b7-a856e7faa496  2026-10-04 06:30:00+00
+--   БУДУЩИЕ
+--   69e9c0de-1ba9-46a1-8e7f-8ffa3c7585ba  2026-10-05 06:30:00+00
+--   f8c4d84d-ae03-4bd0-8feb-0097b3b55101  2026-10-06 06:30:00+00
+--   65288317-6ddd-4ec2-b8fc-a55e1386fe9b  2026-10-07 06:30:00+00
+--   4debe155-7101-4545-a582-306ab5247e41  2026-10-08 06:30:00+00
+--   1293eb17-d5f8-4c8d-83bc-f414a49a1c17  2026-10-09 06:30:00+00
+--   585cf49b-7f7a-442b-b32f-9c439a2a9422  2026-10-10 06:30:00+00
+-- Каждый день без оплаты список просроченных растёт на одну строку (слот 09:30 МСК),
+-- и шаг 3 подхватывает новую сам — список id ему не нужен.
