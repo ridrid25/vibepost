@@ -32,10 +32,15 @@ with ov as (
 ), a as (
   select greatest(max(scheduled_at), now()) m from posts where status = $$scheduled$$
 )
+-- ПОЧИНЕНО сменой 98 (05.10.2026 09:05 МСК). Скобки вокруг суммы обязательны:
+-- `at time zone` сильнее плюса, без скобок он привязывался к интервалу, и шаг
+-- падал целиком с 42883 "function pg_catalog.timezone(unknown, interval) does
+-- not exist". Проверено прямо из файла: до починки — ошибка, после — 6 строк,
+-- и они совпадают с тем, что делает ШАГ 3.
 select ov.id,
        to_char(ov.scheduled_at at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) old_slot,
-       to_char(ov.scheduled_at
-         + ((ceil(extract(epoch from (a.m - ov.scheduled_at)) / 86400.0)::int + ov.rn) || $$ days$$)::interval
+       to_char((ov.scheduled_at
+         + ((ceil(extract(epoch from (a.m - ov.scheduled_at)) / 86400.0)::int + ov.rn) || $$ days$$)::interval)
          at time zone $$Europe/Moscow$$, $$MM-DD HH24:MI$$) new_slot
 from ov, a order by ov.scheduled_at;
 
