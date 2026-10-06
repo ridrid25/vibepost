@@ -192,3 +192,115 @@ select
   end as prigovor
 from sost;
 -- МАРКЕР-КОНЕЦ-СТОРОЖ
+
+-- ==========================================================
+-- ПОПРАВКА СМЕНЫ 110 (06.10.2026, ~03:20 МСК). ЗАМЕР, А НЕ ЧТЕНИЕ КОДА.
+-- Мера НЕ применена и этой сменой тоже. Тело функции и крон НЕ менялись.
+--
+-- 1. ПУНКТ 6 ШАПКИ НЕВЕРЕН. Там записано: 'Прямо к api.telegram.org НЕ
+--    обращается НИ ОДИН крон - у базы сейчас нет ни одного своего пути до неё'.
+--    Это ошибка МЕТОДА, а не описка: перечень смены 109 читал cron.job.command,
+--    а команда живого SQL-крона выглядит как 'select public.имя_функции()' -
+--    сам вызов Telegram лежит в ТЕЛЕ функции и в команде не виден вовсе.
+--    Правильный перечень (прогнан по телам функций, сторож ниже, и сошёлся
+--    с независимым обходом тех же тел на стороне дежурного):
+--      живых кронов 22; из них 15 стучат в Edge Functions, 5 чистый SQL без
+--      Telegram, и ДВА чистым SQL ДОСТАЮТ до api.telegram.org мимо функций:
+--        крон 15 vibepost-worker-watchdog -> public.worker_watchdog()    (*/10)
+--        крон 28 vibepost-recover-stuck   -> public.recover_stuck_posts() (*/5)
+--      Оба зовут net.http_post на api.telegram.org/bot<token>/sendMessage
+--      прямо из plpgsql, оба живы под 402 и тикают прямо сейчас.
+--
+-- 2. ЧТО ЭТО МЕНЯЕТ ДЛЯ МЕРЫ - ОНА СТАНОВИТСЯ НАДЁЖНЕЕ, А НЕ ЛИШНЕЙ.
+--    Ни один из этих двоих не сторожит постинг, и это проверено по их
+--    условиям, а не по названиям: worker_watchdog смотрит claude_tasks (её
+--    задания) и сейчас молчит по ПРАВИЛЬНОЙ причине - очередь чиста, он
+--    возвращает 'ochered_chistaya'; recover_stuck_posts берёт только посты,
+--    уже зависшие в status = processing, а просроченные сейчас лежат в
+--    scheduled и под его условие не попадают ни одним из семи.
+--    Значит дыра, которую закрывает мера, настоящая. Но образец, по которому
+--    мера написана, в проекте УЖЕ РАЗВЁРНУТ И ЖИВ в двух местах - это не
+--    новый приём, а повторение своего же, и риск у него соответственно ниже.
+--
+-- 3. АНТИСПАМ ЕСТЬ СВОЙ, И ОН ЛУЧШЕ ЗАПРОСА К notifications.
+--    worker_watchdog глушит повтор через таблицу worker_alert_state
+--    (worker, last_alert_at) с параметром mute_min - ровно та задача, которую
+--    мера решает запросом к notifications за час. Таблица уже есть, строка в
+--    ней одна ('brigada', last_alert_at = 2026-09-28 07:50 UTC), второй ключ
+--    она примет без миграции.
+--    НЕ ПЕРЕПИСАЛ тело меры под неё НАМЕРЕННО: смена 109 прогнала свой сторож
+--    на всех пяти состояниях именно в этой редакции, а переписать антиспам -
+--    значит обнулить ту проверку, не прогнав новую. Это выбор следующей смены:
+--    либо оставить notifications (работает, прогнано), либо перевести на
+--    worker_alert_state и прогнать сторож заново целиком.
+--
+-- 4. ЗАМЕР, КОТОРОГО НЕ БЫЛО НИ У ОДНОЙ СМЕНЫ: ПРОВЕРЕН POST, А НЕ ТОЛЬКО GET.
+--    Пункт 7 шапки стоит на net.http_get (getMe, запрос 267236). Но и мера, и
+--    оба живых сторожа ходят через net.http_POST - другой глагол, другой путь
+--    в pg_net, другое тело запроса. Прогнано отдельно: net.http_post на
+--    api.telegram.org/bot<token>/getMe при живом 402 на /rest/v1 вернул
+--    status_code = 200, timed_out = false, error_msg = null, в теле ok:true
+--    (запрос 267394, 06.10 ~03:10 МСК). Проверено безвредным getMe, а не
+--    отправкой ей. Теперь под мерой стоит тот же глагол, которым она ходит.
+--
+-- 5. ЧЕГО ПОПРАВКА НЕ МЕНЯЕТ: мера по-прежнему НЕ ПРИМЕНЕНА; применять
+--    по-прежнему ТОЛЬКО после снятия блокировки (просрочено 7, первый же
+--    прогон написал бы ей лишнее); блокировку она не снимает, публикаций не
+--    отправляет, приём заданий не возвращает, бюджет залпа не трогает.
+-- ==========================================================
+
+
+-- ================ СТОРОЖ ПЕРЕЧНЯ (смена 110) ================
+-- Только чтение, ничего не создаёт и не меняет. Отвечает на вопрос
+-- 'есть ли у базы свой путь до неё', читая ТЕЛА функций, а не команды
+-- кронов - то есть не повторяя ошибку метода из пункта 1. Все цифры из базы,
+-- поэтому сторож останется правдивым и после оплаты, и после правок кронов.
+-- Ограничение названо честно: родство ищется подстрокой 'имя(' - на именах
+-- worker_watchdog и recover_stuck_posts это однозначно, но короткое имя
+-- функции в теории может совпасть с куском другого слова.
+-- Прогнан сменой 110 прямо из базы: 22 живых, 15 в Edge Functions,
+-- 2 SQL достают до Telegram, 5 SQL без Telegram -> вердикт ЕСТЬ ПУТЬ.
+-- МАРКЕР-НАЧАЛО-СТОРОЖ-ПЕРЕЧНЯ
+with recursive tg_fn as (
+  select p.oid, p.proname
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+   where n.nspname = 'public' and p.prokind = 'f'
+     and pg_get_functiondef(p.oid) like '%api.telegram.org%'
+  union
+  select p2.oid, p2.proname
+    from pg_proc p2
+    join pg_namespace n2 on n2.oid = p2.pronamespace
+    join tg_fn t on pg_get_functiondef(p2.oid) like '%' || t.proname || '(%'
+   where n2.nspname = 'public' and p2.prokind = 'f'
+), krony as (
+  select j.jobid, j.jobname,
+         (j.command like '%/functions/v1/%') as v_edge,
+         (j.command like '%api.telegram.org%'
+          or exists (select 1 from tg_fn t
+                      where j.command like '%' || t.proname || '(%')) as do_tg
+    from cron.job j
+   where j.active
+)
+select
+  count(*)                                              as zhivyh_kronov,
+  count(*) filter (where v_edge)                        as v_edge_functions,
+  count(*) filter (where not v_edge and do_tg)          as sql_do_telegram,
+  count(*) filter (where not v_edge and not do_tg)      as sql_bez_telegram,
+  (select string_agg(jobid || ' ' || jobname, ', ' order by jobid)
+     from krony where not v_edge and do_tg)             as kto_dostayot,
+  (select string_agg(proname, ', ' order by proname) from tg_fn)
+                                                        as funkcii_s_telegram,
+  case
+    when count(*) filter (where not v_edge and do_tg) = 0 then
+      'НЕТ ПУТИ: ни один живой SQL-крон не достаёт до api.telegram.org - '
+      || 'тревога возможна только через Edge Functions, а их гасит 402. '
+      || 'Мера нужна целиком, вместе с проверкой что pg_net вообще выходит наружу.'
+    else
+      'ЕСТЬ ПУТЬ: ' || count(*) filter (where not v_edge and do_tg)
+      || ' живых SQL-кронов достают до api.telegram.org мимо Edge Functions. '
+      || 'Приём меры в проекте уже развёрнут и работает - писать надо не новый '
+      || 'способ, а второго потребителя того же способа.'
+  end                                                   as prigovor
+from krony;
+-- МАРКЕР-КОНЕЦ-СТОРОЖ-ПЕРЕЧНЯ
