@@ -217,6 +217,31 @@ async function собратьРолики(admin: SupabaseClient, uid: string): P
  * копирует из карточки — по первой его строке (шутке) ролик и узнаётся.
  * Связь по idea_id тут не годится: из 69 готовых роликов с листком связаны 18.
  */
+/**
+ * Опознание по обложке (tiktok-opoznanie, 12.10.2026): ролик ТикТока → карточка
+ * завода. Это главный путь — заказчица пишет в ТикТоке свои подписи, и по тексту
+ * ролики не связывались вовсе. По описанию ищем только то, чего опознание не нашло.
+ */
+async function карточкиПоОбложке(
+  admin: SupabaseClient,
+  uid: string,
+): Promise<Map<string, { зверь: string; схема: string | null; замер: number | null }>> {
+  const { data } = await admin.from("tiktok_kartochki")
+    .select("external_video_id, incoming_videos(name, shema_dvizheniya, measure_avg)")
+    .eq("user_id", uid).not("incoming_video_id", "is", null);
+  const карта = new Map<string, { зверь: string; схема: string | null; замер: number | null }>();
+  for (const x of (data ?? []) as Array<Record<string, any>>) {
+    const к = x.incoming_videos;
+    if (!к) continue;
+    карта.set(String(x.external_video_id), {
+      зверь: зверьИзИмени(к.name),
+      схема: к.shema_dvizheniya ?? null,
+      замер: к.measure_avg == null ? null : Number(к.measure_avg),
+    });
+  }
+  return карта;
+}
+
 async function зверипоОписаниям(
   admin: SupabaseClient,
   uid: string,
@@ -253,6 +278,7 @@ async function тиктокРазбор(admin: SupabaseClient, uid: string) {
   if (!data?.length) return null;
 
   const звери = await зверипоОписаниям(admin, uid);
+  const поОбложке = await карточкиПоОбложке(admin, uid);
 
   const свежие = new Map<string, Record<string, unknown>>();
   for (const строка of data) {
@@ -273,7 +299,10 @@ async function тиктокРазбор(admin: SupabaseClient, uid: string) {
       час: мск.getUTCHours(),
       день: ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"][мск.getUTCDay()],
       текст: String(p.title ?? p.video_description ?? ""),
-      зверь: звери.get(ключТекста(String(p.title ?? p.video_description ?? ""))) ?? null,
+      зверь: поОбложке.get(String(p.external_video_id))?.зверь ??
+        звери.get(ключТекста(String(p.title ?? p.video_description ?? ""))) ?? null,
+      схема: поОбложке.get(String(p.external_video_id))?.схема ?? null,
+      замер: поОбложке.get(String(p.external_video_id))?.замер ?? null,
     };
   }).filter((р) => р.views > 0);
 
@@ -336,6 +365,8 @@ async function тиктокРазбор(admin: SupabaseClient, uid: string) {
       режем("Тема", (р) => темаТекста(р.текст)),
       режем("Зверь", (р) => р.зверь),
       режем("Зверь и тема", (р) => (р.зверь ? `${р.зверь} · ${темаТекста(р.текст)}` : null)),
+      режем("Схема съёмки", (р) => р.схема),
+      режем("Замер динамики", (р) => (р.замер == null ? null : р.замер >= 18 ? "18 и выше" : "ниже 18")),
       режем("Длина ролика", (р) =>
         р.длина <= 0 ? null : р.длина <= 10 ? "до 10 секунд" : р.длина <= 15 ? "11-15 секунд" : "16 секунд и длиннее"),
       режем("Час выхода в ТикТоке", (р) => `${String(р.час).padStart(2, "0")}:00`),
