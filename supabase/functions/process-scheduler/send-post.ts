@@ -1,6 +1,6 @@
 // send-post: общий модуль отправки одного сообщения в Telegram.
 // Используется планировщиком (Этап 2) и цепочками (Этап 4).
-// По format выбирает sendMessage / sendPhoto / sendPoll,
+// По format выбирает sendMessage / sendPhoto / sendPoll / sendVideo / sendAnimation,
 // добавляет инлайн-кнопки, тихую отправку и отключение превью ссылок.
 
 export interface PostContent {
