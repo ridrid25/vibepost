@@ -114,7 +114,7 @@ Deno.serve(async (req) => {
 
   const { data: cfg } = await admin
     .from("news_config")
-    .select("bot_id, chat_id, post_hour, post_minute")
+    .select("bot_id, chat_id, post_hour, post_minute, digest_mode")
     .eq("user_id", черновик.user_id).maybeSingle();
   if (!cfg) return json(200, { ok: false, причина: "нет настроек" });
 
@@ -190,6 +190,24 @@ Deno.serve(async (req) => {
       });
     }
     return json(200, { ok: true, решение: "мимо", ещё: итог });
+  }
+
+  // Режим «по новостям» (16.10.2026): одно нажатие на всю подборку — до шести
+  // отдельных постов, каждый со своей обложкой от Контент-завода. Пока режим
+  // 'single' (по умолчанию), эта ветка не работает и всё идёт как раньше.
+  if (действие === "ok" && cfg.digest_mode && cfg.digest_mode !== "single") {
+    const { data: план, error } = await admin.rpc("digest_approve_items", { p_digest_id: черновик.id });
+    if (error) {
+      await ответить("Не принялось");
+      return json(200, { ok: false, причина: error.message });
+    }
+    const строки = (план ?? []).map((п: { item_order: number; base_slot_at: string; caption_len: number }) =>
+      `${п.item_order}. ${поМоскве(new Date(п.base_slot_at))}${п.caption_len > 1024 ? " — текст длиннее 1024, стоп" : ""}`);
+    const сухой = cfg.digest_mode === "items_dry" ? " (СУХОЙ ПРОГОН — в канал ничего не уйдёт)" : "";
+    await снятьКнопки(`✅ Принято ${строки.length} новостей${сухой}. Жду обложки.
+Сетка: ${строки.join(", ")}`);
+    await ответить(`Принято: ${строки.length} новостей`);
+    return json(200, { ok: true, решение: "по новостям", режим: cfg.digest_mode, план });
   }
 
   if (действие === "ok") {
