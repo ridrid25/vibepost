@@ -46,6 +46,9 @@ begin
   perform * from digest_dispatch(digest_slot_utc(день, '09:30'));      -- повторный тик
   select count(*) into n from posts where label like 'DIGEST:' || д || ':%';
   лог := лог || format(E'\nA 09:30 дважды: постов %s (ждём 1)', n); if n <> 1 then провалов := провалов + 1; end if;
+  select count(*) into m from posts where label like 'DIGEST:' || д || ':%' and format = 'video' and video_autoplay = false;
+  лог := лог || format(E'\nA пост видео со звуком (sendVideo, autoplay=false): %s (ждём 1)', m);
+  if m <> 1 then провалов := провалов + 1; end if;
 
   x := digest_cover_ready(п, 'новая-после-поста', 'content-factory/digest/y.mp4', 'sha', digest_slot_utc(день, '09:31'));
   лог := лог || E'\nA подмена обложки после поста: ' || x;
