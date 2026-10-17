@@ -130,5 +130,27 @@ begin
   лог := лог || E'\nF подпись 1100 знаков: ' || x || ' (ждём blocked_long_caption, текст не режется)';
   if x <> 'blocked_long_caption' then провалов := провалов + 1; end if;
 
+  -- ===== H. пункты со звёздочкой (как 17.10), жирный заголовок — не пункт =====
+  update news_config set digest_mode = 'items_dry' where user_id = uid;
+  insert into news_digests (user_id, text)
+  values (uid, E'**Коротко за день**\n\n* Новость один.\n* Новость два.\n*Без пробела — не пункт.\n* Новость три.')
+  returning id into д;
+  perform digest_approve_items(д, digest_slot_utc(день, '08:46'));
+  select count(*) into n from news_digest_items where digest_id = д;
+  select text into x from news_digest_items where digest_id = д and item_order = 1;
+  лог := лог || format(E'\nH звёздочки: новостей %s (ждём 3), первая «%s»', n, x);
+  if n <> 3 or x <> 'Новость один.' then провалов := провалов + 1; end if;
+
+  -- ===== I. ни одного пункта: отказ, статус не меняется =====
+  insert into news_digests (user_id, text) values (uid, E'Коротко за день\n\nПросто текст без пунктов.') returning id into д;
+  begin
+    perform digest_approve_items(д, digest_slot_utc(день, '08:46'));
+    лог := лог || E'\nI ПРОВАЛ: пустая подборка принята'; провалов := провалов + 1;
+  exception when others then
+    select status into x from news_digests where id = д;
+    лог := лог || E'\nI ок: пустая подборка отклонена, статус ' || x;
+    if x <> 'draft' then провалов := провалов + 1; end if;
+  end;
+
   raise exception 'ИТОГ ТЕСТА: провалов %; %', провалов, лог;
 end $$;
