@@ -155,5 +155,28 @@ begin
     if x <> 'draft' then провалов := провалов + 1; end if;
   end;
 
+  -- ===== J. подача как у «Топора» (18.10): заголовок + подробности, жирный, ссылка =====
+  update news_config set digest_mode = 'items' where user_id = uid;
+  insert into news_digests (user_id, text)
+  values (uid, E'Коротко за день\n\n• **ЦБ сохранил ставку 16%**, — Банк России.\nРешение принято на заседании, следующее — в декабре; инфляция **8,1%** & ожидания <выше>.\n\n• **Вторая новость**, — РБК.\nПодробности второй.')
+  returning id into д;
+  perform digest_approve_items(д, digest_slot_utc(день, '08:46'));
+  select count(*) into n from news_digest_items where digest_id = д;
+  select text into x from news_digest_items where digest_id = д and item_order = 1;
+  лог := лог || format(E'\nJ двухстрочные новости: %s (ждём 2), в первой перенос строки: %s', n, position(E'\n' in x) > 0);
+  if n <> 2 or position(E'\n' in x) = 0 then провалов := провалов + 1; end if;
+  for r in select id from news_digest_publications where digest_id = д loop
+    perform digest_cover_ready(r.id, 'j' || r.id, 'content-factory/digest/' || д || '/j.mp4', 's', digest_slot_utc(день, '09:00'));
+  end loop;
+  perform * from digest_dispatch(digest_slot_utc(день, '09:30'));
+  select text into x from posts where label = 'DIGEST:' || д || ':1';
+  лог := лог || E'\nJ подпись: ' || replace(coalesce(x, 'НЕТ ПОСТА'), E'\n', '⏎');
+  if x is null
+     or x not like '⚡️ <b>ЦБ сохранил ставку 16%</b>, — Банк России.' || E'\n\n' || '%'
+     or position('<b>8,1%</b>' in x) = 0
+     or position('&amp;' in x) = 0 or position('&lt;выше&gt;' in x) = 0
+     or x not like '%' || E'\n\n' || '👉 <a href="https://t.me/Rid_Finance">рИИдФинанс. Подписаться</a>'
+  then провалов := провалов + 1; лог := лог || ' — ПРОВАЛ'; end if;
+
   raise exception 'ИТОГ ТЕСТА: провалов %; %', провалов, лог;
 end $$;

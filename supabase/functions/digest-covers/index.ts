@@ -47,7 +47,8 @@ Deno.serve(async (req) => {
     if (error) return json(500, { error: error.message });
     return json(200, (data ?? []).map((p: Record<string, any>) => ({
       publication_id: p.id, digest_id: p.digest_id, item_id: p.item_id, item_order: p.item_order,
-      text: p.news_digest_items?.text ?? "", slot_at: p.base_slot_at, dry_run: p.dry_run,
+      // 18.10: в новости разметка **жирного** для канала — заводу нужен чистый текст
+      text: (p.news_digest_items?.text ?? "").replace(/\*\*/g, ""), slot_at: p.base_slot_at, dry_run: p.dry_run,
     })));
   }
   if (req.method === "GET" && u.searchParams.get("vid") === "sent") {

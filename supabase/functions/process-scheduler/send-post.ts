@@ -15,6 +15,7 @@ export interface PostContent {
   inline_buttons: unknown; // [[{ text, url }], ...]
   is_silent: boolean;
   disable_link_preview: boolean;
+  label?: string | null; // 'DIGEST:…' — подпись дайджеста собрана в HTML (жирный, ссылка)
 }
 
 export interface SendResult {
@@ -63,6 +64,8 @@ export async function sendPost(
         payload.supports_streaming = true;
       }
       if (post.text) payload.caption = post.text;
+      // 18.10: только посты дайджеста — подача как у «Топора», digest_caption() в SQL
+      if (post.label?.startsWith("DIGEST:")) payload.parse_mode = "HTML";
       break;
     case "poll": {
       method = "sendPoll";
