@@ -178,5 +178,40 @@ begin
      or x not like '%' || E'\n\n' || '👉 <a href="https://t.me/Rid_Finance">рИИдФинанс. Подписаться</a>'
   then провалов := провалов + 1; лог := лог || ' — ПРОВАЛ'; end if;
 
+  -- ===== K. новость часа (18.10): завести, повтор, остановка, выход в час, устаревание =====
+  update news_config set digest_mode = 'hourly' where user_id = uid;
+  п := digest_hourly_create(uid, E'**Новость часа**, — РБК.\nПодробности **1%**.', digest_slot_utc(день, '10:00'), digest_slot_utc(день, '09:36'));
+  x := coalesce(digest_hourly_create(uid, E'**Другая**, — РБК.\nX.', digest_slot_utc(день, '10:00'), digest_slot_utc(день, '09:37'))::text, 'null');
+  лог := лог || format(E'\nK завести на 10:00: %s; повтор на тот же час: %s (ждём null)', п is not null, x);
+  if п is null or x <> 'null' then провалов := провалов + 1; end if;
+  perform * from digest_dispatch(digest_slot_utc(день, '09:58'));      -- обложки нет, тревоги быть не должно
+  select alerted_at is null into strict x from news_digest_publications where id = п;
+  perform digest_cover_ready(п, 'k1', 'content-factory/digest/k.mp4', 's', digest_slot_utc(день, '09:40'));
+  perform * from digest_dispatch(digest_slot_utc(день, '09:59'));
+  select count(*) into n from posts p join news_digest_publications d on d.post_id = p.id where d.id = п;
+  perform * from digest_dispatch(digest_slot_utc(день, '10:00'));
+  select count(*) into m from posts p join news_digest_publications d on d.post_id = p.id where d.id = п;
+  лог := лог || format(E'\nK 09:59 постов %s (ждём 0), 10:00 постов %s (ждём 1)', n, m);
+  if n <> 0 or m <> 1 then провалов := провалов + 1; end if;
+  x := digest_hourly_stop(п);
+  лог := лог || E'\nK стоп после поста: ' || x || ' (ждём «уже в канале»)';
+  if x <> 'уже в канале' then провалов := провалов + 1; end if;
+
+  п := digest_hourly_create(uid, E'**Остановят**, — РБК.\nY.', digest_slot_utc(день, '11:00'), digest_slot_utc(день, '10:36'));
+  x := digest_hourly_stop(п);
+  perform digest_cover_ready(п, 'k2', 'content-factory/digest/k2.mp4', 's', digest_slot_utc(день, '10:40'));
+  perform * from digest_dispatch(digest_slot_utc(день, '11:00'));
+  select status into x from news_digest_publications where id = п;
+  select count(*) into n from posts p join news_digest_publications d on d.post_id = p.id where d.id = п;
+  лог := лог || format(E'\nK остановленная: статус %s, постов %s (ждём cancelled/0)', x, n);
+  if x <> 'cancelled' or n <> 0 then провалов := провалов + 1; end if;
+
+  п := digest_hourly_create(uid, E'**Без обложки**, — РБК.\nZ.', digest_slot_utc(день, '12:00'), digest_slot_utc(день, '11:36'));
+  select count(*) into n from digest_dispatch(digest_slot_utc(день, '12:20')) z where z.action = 'cover_late' and z.publication_id = п;
+  perform * from digest_dispatch(digest_slot_utc(день, '12:41'));
+  select status into x from news_digest_publications where id = п;
+  лог := лог || format(E'\nK без обложки: тревог %s (ждём 0), к 12:41 статус %s (ждём expired)', n, x);
+  if n <> 0 or x <> 'expired' then провалов := провалов + 1; end if;
+
   raise exception 'ИТОГ ТЕСТА: провалов %; %', провалов, лог;
 end $$;

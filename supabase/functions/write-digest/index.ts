@@ -140,9 +140,11 @@ Deno.serve(async () => {
 
   const { data: cfg } = await admin
     .from("news_config")
-    .select("user_id, bot_id, chat_id, enabled")
+    .select("user_id, bot_id, chat_id, enabled, digest_mode")
     .eq("enabled", true).maybeSingle();
   if (!cfg) return json(200, { ok: true, нечего: true });
+  // 18.10: в режиме «новость часа» утренней подборки нет — работает news-hourly
+  if (cfg.digest_mode === "hourly") return json(200, { ok: true, пропуск: "режим hourly" });
 
   const сутки = new Date(Date.now() - 30 * 3600 * 1000).toISOString();
   const { data: новости } = await admin

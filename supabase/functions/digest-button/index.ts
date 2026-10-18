@@ -106,6 +106,31 @@ Deno.serve(async (req) => {
 
   const [, действие, id] = String(callback.data).split(":");
 
+  // 18.10: новость часа — кнопка «🛑 Не публиковать» (id — публикация, не черновик)
+  if (действие === "stop") {
+    const { data: итог } = await admin.rpc("digest_hourly_stop", { p_publication: id });
+    const { data: cfgС } = await admin.from("news_config").select("bot_id").eq("enabled", true).maybeSingle();
+    const { data: botС } = await admin.from("bots").select("token_secret_id").eq("id", cfgС?.bot_id).maybeSingle();
+    const { data: tok } = await admin.rpc("get_bot_token", { p_secret_id: botС?.token_secret_id });
+    const текстОтвета = итог === "остановлено" ? "Остановлено — в канал не выйдет"
+      : итог === "уже в канале" ? "Уже опубликовано — остановить нельзя" : String(итог ?? "Не получилось");
+    await fetch(`https://api.telegram.org/bot${tok}/answerCallbackQuery`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callback.id, text: текстОтвета }),
+    }).catch(() => null);
+    if (callback.message) {
+      await fetch(`https://api.telegram.org/bot${tok}/editMessageReplyMarkup`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: callback.message.chat.id, message_id: callback.message.message_id,
+          reply_markup: { inline_keyboard: [[{ text: `✔ ${текстОтвета}`, callback_data: "dg:noop:0" }]] },
+        }),
+      }).catch(() => null);
+    }
+    return json(200, { ok: true, остановка: итог });
+  }
+  if (действие === "noop") return json(200, { ok: true });
+
   const { data: черновик } = await admin
     .from("news_digests")
     .select("id, user_id, text, status, tg_message_id, post_id")
