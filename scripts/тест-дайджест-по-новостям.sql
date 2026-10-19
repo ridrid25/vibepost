@@ -208,9 +208,9 @@ begin
 
   п := digest_hourly_create(uid, E'**Без обложки**, — РБК.\nZ.', digest_slot_utc(день, '12:00'), digest_slot_utc(день, '11:36'));
   select count(*) into n from digest_dispatch(digest_slot_utc(день, '12:20')) z where z.action = 'cover_late' and z.publication_id = п;
-  perform * from digest_dispatch(digest_slot_utc(день, '12:41'));
+  perform * from digest_dispatch(digest_slot_utc(день, '12:56'));
   select status into x from news_digest_publications where id = п;
-  лог := лог || format(E'\nK без обложки: тревог %s (ждём 0), к 12:41 статус %s (ждём expired)', n, x);
+  лог := лог || format(E'\nK без обложки: тревог %s (ждём 0), к 12:56 статус %s (ждём expired)', n, x);
   if n <> 0 or x <> 'expired' then провалов := провалов + 1; end if;
 
   raise exception 'ИТОГ ТЕСТА: провалов %; %', провалов, лог;
