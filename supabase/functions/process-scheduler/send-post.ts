@@ -47,6 +47,8 @@ export async function sendPost(
       payload.link_preview_options = {
         is_disabled: post.disable_link_preview === true,
       };
+      // 19.10: новость часа без обложки уходит текстом — та же HTML-подача
+      if (post.label?.startsWith("DIGEST:")) payload.parse_mode = "HTML";
       break;
     case "photo":
       method = "sendPhoto";

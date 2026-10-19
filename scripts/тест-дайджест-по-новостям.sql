@@ -210,8 +210,22 @@ begin
   select count(*) into n from digest_dispatch(digest_slot_utc(день, '12:20')) z where z.action = 'cover_late' and z.publication_id = п;
   perform * from digest_dispatch(digest_slot_utc(день, '12:56'));
   select status into x from news_digest_publications where id = п;
-  лог := лог || format(E'\nK без обложки: тревог %s (ждём 0), к 12:56 статус %s (ждём expired)', n, x);
-  if n <> 0 or x <> 'expired' then провалов := провалов + 1; end if;
+  лог := лог || format(E'\nK без обложки: тревог %s (ждём 0), к 12:56 статус %s (ждём posted_to_queue — с 19.10 уходит текстом)', n, x);
+  if n <> 0 or x <> 'posted_to_queue' then провалов := провалов + 1; end if;
+
+  -- ===== L. без обложки через 10 минут — текстом (19.10) =====
+  п := digest_hourly_create(uid, E'**Текстом**, — РБК.\nПодробности **2%**.', digest_slot_utc(день, '14:00'), digest_slot_utc(день, '13:36'));
+  perform * from digest_dispatch(digest_slot_utc(день, '14:05'));
+  select count(*) into n from posts p join news_digest_publications d on d.post_id = p.id where d.id = п;
+  perform * from digest_dispatch(digest_slot_utc(день, '14:10'));
+  perform * from digest_dispatch(digest_slot_utc(день, '14:15'));
+  select count(*) into m from posts p join news_digest_publications d on d.post_id = p.id where d.id = п;
+  select p.format || '|' || left(p.text, 30) into x from posts p join news_digest_publications d on d.post_id = p.id where d.id = п;
+  лог := лог || format(E'\nL 14:05 постов %s (ждём 0), 14:10–14:15 постов %s (ждём 1): %s', n, m, coalesce(x, '—'));
+  if n <> 0 or m <> 1 or x not like 'text|⚡️ <b>Текстом</b>%' then провалов := провалов + 1; end if;
+  x := digest_cover_ready(п, 'late', 'content-factory/digest/late.mp4', 's', digest_slot_utc(день, '14:20'));
+  лог := лог || E'\nL поздняя обложка после текста: ' || x;
+  if x not like '%пост уже%' then провалов := провалов + 1; end if;
 
   raise exception 'ИТОГ ТЕСТА: провалов %; %', провалов, лог;
 end $$;
