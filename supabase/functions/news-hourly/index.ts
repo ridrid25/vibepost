@@ -146,13 +146,15 @@ Deno.serve(async (req) => {
   const проба = тело?.проба === true;
 
   const { data: cfg } = await admin.from("news_config")
-    .select("user_id, bot_id, enabled, digest_mode").eq("enabled", true).maybeSingle();
+    .select("user_id, bot_id, enabled, digest_mode, send_hour, post_hour").eq("enabled", true).maybeSingle();
   if (!cfg || (cfg.digest_mode !== "hourly" && !проба)) return json(200, { ok: true, пропуск: "режим не hourly" });
 
-  // Ближайший полный час. Публикуем только 08:00…18:00 МСК.
+  // Ближайший полный час. Рамки вещания — из настроек (19.10.2026, её решение):
+  // send_hour = «С» (первая новость), post_hour = «До» (последняя), часы МСК.
+  const с = Number(cfg.send_hour ?? 8), до = Number(cfg.post_hour ?? 18);
   const слот = new Date(Math.ceil((Date.now() + 60_000) / 3_600_000) * 3_600_000);
   const часМск = (слот.getUTCHours() + 3) % 24;
-  if (!проба && (часМск < 8 || часМск > 18)) return json(200, { ok: true, пропуск: `час ${часМск} вне 08–18` });
+  if (!проба && (часМск < с || часМск > до)) return json(200, { ok: true, пропуск: `час ${часМск} вне ${с}–${до}` });
 
   const { data: уже } = await admin.from("news_digest_publications")
     .select("id").eq("user_id", cfg.user_id).eq("hourly", true)
