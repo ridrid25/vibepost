@@ -146,7 +146,7 @@ Deno.serve(async (req) => {
   const проба = тело?.проба === true;
 
   const { data: cfg } = await admin.from("news_config")
-    .select("user_id, bot_id, enabled, digest_mode, send_hour, post_hour").eq("enabled", true).maybeSingle();
+    .select("user_id, bot_id, enabled, digest_mode, send_hour, post_hour, auto_publish").eq("enabled", true).maybeSingle();
   if (!cfg || (cfg.digest_mode !== "hourly" && !проба)) return json(200, { ok: true, пропуск: "режим не hourly" });
 
   // Ближайший полный час. Рамки вещания — из настроек (19.10.2026, её решение):
@@ -245,6 +245,9 @@ Deno.serve(async (req) => {
   if (!публикация) return json(200, { ok: true, пропуск: "на этот час уже есть" });
 
   // Превью ей с кнопкой остановки. Не нажала — новость выйдет сама.
+  // Тихий режим (переключатель в настройках, колонка auto_publish, её решение 19.10):
+  // превью не шлём вовсе, новость выходит без неё.
+  if (cfg.auto_publish) return json(200, { ok: true, слот: слот.toISOString(), публикация, тихо: true });
   const { data: bot } = await admin.from("bots").select("token_secret_id").eq("id", cfg.bot_id).maybeSingle();
   const { data: tgToken } = await admin.rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
   const { data: профиль } = await admin.from("profiles").select("error_notify_tg_id")
