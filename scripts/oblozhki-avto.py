@@ -123,6 +123,7 @@ def главное() -> int:
             return 1
         for п in json.loads(вывод or "[]"):
             ид = п["publication_id"]
+            журнал(f"{ид[:8]} нужна обложка (готов исходник: {п.get('source_ready')})")
             if п.get("dry_run"):
                 continue
             начало = time.time()
@@ -155,4 +156,12 @@ def главное() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(главное())
+    # 20.10: с 15:36 до 17:40 журнал молчал — падения мимо журнала. Пишем любое.
+    try:
+        sys.exit(главное())
+    except SystemExit:
+        raise
+    except BaseException as e:
+        журнал(f"СБОЙ {type(e).__name__}: {str(e)[:120]}")
+        ЗАМОК.unlink(missing_ok=True)
+        sys.exit(1)
