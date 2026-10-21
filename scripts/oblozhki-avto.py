@@ -5,7 +5,7 @@ r"""Запасной художник обложек «новости часа»
   21.10.2026 — «FLUX.2 dev как запасной: если Кодекс не отвечает столько-то или
   нет лимитов — автоматом переходим на FLUX.2».
 
-Порядок (Планировщик Windows запускает раз в минуту):
+Порядок (Планировщик Windows запускает 4 раза в час: :47, :50, :53, :56, без окон):
   * новость появляется в :36, её рисует Кодекс;
   * за 13 минут до выхода (обычно :47) обложки всё нет — рисуем сами:
     описание сцены (Cloudflare, бесплатная Llama 3.3) → картинка FLUX.2 dev
@@ -66,6 +66,8 @@ def завод(*арг: str, срок: int = 300) -> tuple[int, str, str]:
         [str(ПИТОН), "-m", "content_factory.integrations.vibepost_digest_cli", *арг],
         cwd=ЗАВОД, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=срок,
         env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"},
+        # без чёрных окон консоли на экране (её замечание 21.10)
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
 
