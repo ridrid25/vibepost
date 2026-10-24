@@ -43,6 +43,15 @@ from pathlib import Path
 
 ЖДАТЬ_КОДЕКС = timedelta(minutes=13)       # до выхода: рисуем сами, если обложки нет
 СНЯТЬ_БРОНЬ = timedelta(minutes=8)          # до выхода: бронь Кодекса больше не ждём
+# 24.10: бесплатных 10 000 нейронов в сутки (сброс 00:00 UTC) должно хватить на все
+# 13 часов. klein ≈ 900, schnell ≈ 330: klein не больше 8 раз за сутки, дальше schnell.
+KLEIN_В_СУТКИ = 8
+СЧЁТ_KLEIN = ЗДЕСЬ / "oblozhki-klein.json"
+# 24.10: последнее звено — AI Horde (бесплатно, без регистрации, очередь 15–20 мин).
+# Заказ уходит сразу, как появилась новость (запуск в :38), забираем при неудаче Cloudflare.
+HORDE = "https://aihorde.net/api/v2/generate/"
+HORDE_ЗАГОЛОВКИ = {"apikey": "0000000000", "Client-Agent": "vibepost-covers:1:anon",
+                   "Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
 
 
 def журнал(строка: str) -> None:
@@ -90,7 +99,18 @@ def облако(к: dict[str, str], модель: str, *, json_тело: dict |
     return json.load(urllib.request.urlopen(запрос, timeout=срок))
 
 
-def сцена(к: dict[str, str], текст: str) -> str:
+def сцена(к: dict[str, str], текст: str, ид: str = "") -> str:
+    кеш = ПАПКА / f"{ид}.scene.txt"
+    if ид and кеш.exists():
+        return кеш.read_text(encoding="utf-8")
+    s = _сцена(к, текст)
+    if ид:
+        ПАПКА.mkdir(parents=True, exist_ok=True)
+        кеш.write_text(s, encoding="utf-8")
+    return s
+
+
+def _сцена(к: dict[str, str], текст: str) -> str:
     указание = (
         "Write ONE English image prompt (max 45 words) for a cinematic editorial illustration "
         "for this finance news. Only concrete objects, setting and light; the scene is BRIGHT and well lit, "
@@ -126,7 +146,15 @@ def картинка(к: dict[str, str], описание: str, куда: Path) 
     # 24.10: FLUX.2 dev ≈ 7 400 нейронов за картинку при бесплатных 10 000 в сутки —
     # одна обложка в день, дальше 429. Теперь klein 1024×576 (≈ 900, ~10 в день),
     # за ним schnell (≈ 330) — он без размеров, квадрат 1024; deliver обрежет под 16:9.
-    for модель in ("@cf/black-forest-labs/flux-2-klein-9b", "@cf/black-forest-labs/flux-1-schnell"):
+    сегодня = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        счёт = json.loads(СЧЁТ_KLEIN.read_text(encoding="utf-8"))
+    except Exception:
+        счёт = {}
+    модели = ["@cf/black-forest-labs/flux-1-schnell"]
+    if счёт.get(сегодня, 0) < KLEIN_В_СУТКИ:
+        модели.insert(0, "@cf/black-forest-labs/flux-2-klein-9b")
+    for модель in модели:
         try:
             if модель.endswith("schnell"):
                 о = облако(к, модель, json_тело={"prompt": описание + хвост, "steps": 8})
@@ -136,6 +164,8 @@ def картинка(к: dict[str, str], описание: str, куда: Path) 
             if len(данные) < 20_000:
                 raise ValueError("мала")
             куда.write_bytes(данные)
+            if "klein" in модель:
+                СЧЁТ_KLEIN.write_text(json.dumps({сегодня: счёт.get(сегодня, 0) + 1}), encoding="utf-8")
             return модель.rsplit("/", 1)[-1]
         except Exception as e:
             журнал(f"  {модель.rsplit('/', 1)[-1]}: {type(e).__name__} {getattr(e, 'code', '')}")
@@ -175,6 +205,58 @@ def поллинейшнс(описание: str, куда: Path) -> str | None:
     return None
 
 
+def horde_заказать(к: dict[str, str] | None, ид: str, текст: str) -> None:
+    """Заказ в очередь Horde заранее; номер заказа — в ПАПКА/<ид>.horde."""
+    файл = ПАПКА / f"{ид}.horde"
+    if файл.exists():
+        return
+    if not к:
+        return
+    описание = сцена(к, текст, ид)
+    тело = {"prompt": описание + ", bright vivid lighting, rich detail, wide composition"
+            " ### text, letters, numbers, watermark, logo, blurry, deformed, ugly, distorted faces",
+            "models": ["Juggernaut XL"], "r2": True,
+            "params": {"width": 1024, "height": 576, "steps": 30, "cfg_scale": 6,
+                       "sampler_name": "k_dpmpp_2m", "karras": True, "n": 1}}
+    try:
+        о = json.load(urllib.request.urlopen(urllib.request.Request(
+            HORDE + "async", data=json.dumps(тело).encode(), headers=HORDE_ЗАГОЛОВКИ), timeout=60))
+        ПАПКА.mkdir(parents=True, exist_ok=True)
+        файл.write_text(о["id"], encoding="utf-8")
+        журнал(f"{ид[:8]} Horde: заказ в очередь")
+    except Exception as e:
+        журнал(f"{ид[:8]} Horde заказ: {type(e).__name__} {getattr(e, 'code', '')}")
+
+
+def horde_забрать(ид: str, куда: Path) -> str | None:
+    файл = ПАПКА / f"{ид}.horde"
+    if not файл.exists():
+        return None
+    номер = файл.read_text(encoding="utf-8").strip()
+    try:
+        с = json.load(urllib.request.urlopen(urllib.request.Request(
+            HORDE + "check/" + номер, headers=HORDE_ЗАГОЛОВКИ), timeout=30))
+        if с.get("faulted") or not с.get("is_possible", True):
+            файл.unlink(missing_ok=True)   # заказ пропал — следующий запуск закажет снова
+            журнал(f"  Horde: заказ сорвался, перезаказ")
+            return None
+        if not с.get("done"):
+            журнал(f"  Horde: ещё в очереди ({с.get('queue_position')}, ~{с.get('wait_time')} с)")
+            return None
+        с = json.load(urllib.request.urlopen(urllib.request.Request(
+            HORDE + "status/" + номер, headers=HORDE_ЗАГОЛОВКИ), timeout=60))
+        данные = urllib.request.urlopen(urllib.request.Request(
+            с["generations"][0]["img"], headers={"User-Agent": "Mozilla/5.0"}), timeout=60).read()
+        from io import BytesIO
+        from PIL import Image
+        with Image.open(BytesIO(данные)) as im:
+            im.convert("RGB").save(куда, format="JPEG", quality=94)
+        return "horde-juggernaut-xl"
+    except Exception as e:
+        журнал(f"  Horde: {type(e).__name__} {getattr(e, 'code', '')}")
+        return None
+
+
 def бронь(ид: str) -> Path:
     return ЗАВОД / "data" / "covers" / ("vp-" + ид.replace("-", "")) / ".generation-claim.json"
 
@@ -195,11 +277,21 @@ def главное() -> int:
             return 1
         сейчас = datetime.now(timezone.utc)
         к: dict[str, str] | None = None
+        for старый in ПАПКА.glob("*.horde") if ПАПКА.exists() else []:
+            if time.time() - старый.stat().st_mtime > 6 * 3600:   # заказы прошлых часов
+                старый.unlink(missing_ok=True)
+                старый.with_suffix(".scene.txt").unlink(missing_ok=True)
         for п in json.loads(вывод or "[]"):
             ид = п["publication_id"]
             if п.get("dry_run") or п.get("source_ready"):
                 continue
             выход = datetime.fromisoformat(str(п["slot_at"]).replace("Z", "+00:00"))
+            if not (ПАПКА / f"{ид}.horde").exists():
+                try:
+                    к = к or настройки()
+                except Exception:
+                    pass
+                horde_заказать(к, ид, п["text"])   # страховка: очередь Horde долгая
             if сейчас < выход - ЖДАТЬ_КОДЕКС:
                 continue  # Кодекс ещё рисует — его время
             итог = занять(ид)
@@ -217,7 +309,7 @@ def главное() -> int:
             к = к or настройки()
             ПАПКА.mkdir(parents=True, exist_ok=True)
             источник = ПАПКА / f"{ид}.jpg"
-            модель = картинка(к, сцена(к, п["text"]), источник)
+            модель = картинка(к, сцена(к, п["text"], ид), источник) or horde_забрать(ид, источник)
             if not модель:
                 бронь(ид).unlink(missing_ok=True)
                 журнал(f"{ид[:8]} картинка не вышла — повтор через минуту, в :10 VibePost выпустит текстом")
@@ -226,6 +318,8 @@ def главное() -> int:
             итог = json.loads(вывод).get("result") if код == 0 and вывод else ошибка[:60]
             журнал(f"{ид[:8]} {модель} → deliver: {итог} за {time.time() - начало:.0f} с")
             источник.unlink(missing_ok=True)
+            for хвост in (".horde", ".scene.txt"):
+                (ПАПКА / f"{ид}{хвост}").unlink(missing_ok=True)
         return 0
     finally:
         ЗАМОК.unlink(missing_ok=True)
