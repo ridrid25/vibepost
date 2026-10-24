@@ -168,7 +168,13 @@ def картинка(к: dict[str, str], описание: str, куда: Path) 
                 СЧЁТ_KLEIN.write_text(json.dumps({сегодня: счёт.get(сегодня, 0) + 1}), encoding="utf-8")
             return модель.rsplit("/", 1)[-1]
         except Exception as e:
-            журнал(f"  {модель.rsplit('/', 1)[-1]}: {type(e).__name__} {getattr(e, 'code', '')}")
+            # 24.10: пишем и текст отказа Cloudflare — «429» бывает и суточным лимитом, и частотой
+            текст = ""
+            try:
+                текст = e.read().decode("utf-8", "replace")[:200] if hasattr(e, "read") else ""
+            except Exception:
+                pass
+            журнал(f"  {модель.rsplit('/', 1)[-1]}: {type(e).__name__} {getattr(e, 'code', '')} {текст}")
     # 24.10: Pollinations из рисования убран — обложка 14:00 вышла кривой (мутно,
     # искажённые лица), её оценка «кривая». После schnell — текстом в :10.
     return None
