@@ -202,7 +202,38 @@ Deno.serve(async (req) => {
     `${i + 1}. [${поМоскве(new Date(n.published_at))}] [источник: ${издание.get(n.source_id) ?? "неизвестно"}] ` +
     n.text.replace(/\s+/g, " ").slice(0, 500)).join("\n");
 
+  const вход = (добавка: string) =>
+    `Уже вышло сегодня:\n${ужеВышло.length ? ужеВышло.map((t) => "- " + t).join("\n") : "(ничего)"}` +
+    `\n\nСвежие новости:\n\n${сырьё}${добавка}`;
+
+  // 24.10, её правило «одно не работает — идём следующим вариантом»:
+  // Gemini (Vertex) → бесплатный текстовый помощник Pollinations (без ключа).
+  let звено = "gemini";
   const спросить = async (добавка: string): Promise<string> => {
+    try {
+      const ответ = await спроситьGemini(добавка);
+      if (ответ) return ответ;
+      throw new Error("пустой ответ");
+    } catch (e) {
+      звено = "pollinations";
+      const res = await fetch("https://text.pollinations.ai/openai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "openai",
+          messages: [{ role: "system", content: ПРАВИЛА }, { role: "user", content: вход(добавка) }],
+        }),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!res.ok) throw new Error(`Gemini: ${(e as Error).message}; Pollinations: HTTP ${res.status}`);
+      const т = await res.json();
+      return String(т?.choices?.[0]?.message?.content ?? "").trim();
+    }
+  };
+
+  const спроситьGemini = async (добавка: string): Promise<string> => {
+    // проба с { "безGemini": true } — проверка запасного звена
+    if (проба && тело?.безGemini === true) throw new Error("Gemini выключен для пробы");
     const { token, project } = await googleToken(admin);
     const res = await fetch(
       `https://${РЕГИОН}-aiplatform.googleapis.com/v1/projects/${project}` +
@@ -215,8 +246,7 @@ Deno.serve(async (req) => {
           contents: [{
             role: "user",
             parts: [{
-              text: `Уже вышло сегодня:\n${ужеВышло.length ? ужеВышло.map((t) => "- " + t).join("\n") : "(ничего)"}` +
-                `\n\nСвежие новости:\n\n${сырьё}${добавка}`,
+              text: вход(добавка),
             }],
           }],
           // thinkingBudget: 0 — иначе Gemini 2.5 Flash тратит лимит на рассуждения
@@ -250,7 +280,7 @@ Deno.serve(async (req) => {
   const текст = заг.replace(/^[•·*\-–—]\s*/, "") + (подробности ? "\n" + подробности : "");
 
   if (проба) {
-    return json(200, { ok: true, проба: true, новостей: новости.length, номер, выбрана: новости[номер - 1]?.published_at, текст });
+    return json(200, { ok: true, проба: true, звено, новостей: новости.length, номер, выбрана: новости[номер - 1]?.published_at, текст });
   }
 
   // Выбранную новость помечаем разобранной — в следующий час её не предложат
@@ -286,5 +316,5 @@ Deno.serve(async (req) => {
     if (!итог?.ok) await послать({ text: шапка + текст.replace(/\*\*/g, "") });
   }
 
-  return json(200, { ok: true, слот: слот.toISOString(), публикация, новостей: новости.length });
+  return json(200, { ok: true, слот: слот.toISOString(), публикация, звено, новостей: новости.length });
 });
