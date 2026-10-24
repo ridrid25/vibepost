@@ -37,3 +37,4 @@ oblozhki.lock
 обложка-проба-*.jpg
 cloudflare.env
 сравнение-обложек-*.jpg
+__pycache__/
