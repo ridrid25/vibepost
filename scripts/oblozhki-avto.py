@@ -47,6 +47,7 @@ from pathlib import Path
 # 13 часов. klein ≈ 900, schnell ≈ 330: klein не больше 8 раз за сутки, дальше schnell.
 KLEIN_В_СУТКИ = 8
 СЧЁТ_KLEIN = ЗДЕСЬ / "oblozhki-klein.json"
+СУТКИ_ЗАКРЫТЫ = ЗДЕСЬ / "oblozhki-cf-limit.txt"   # дата UTC, когда кончился суточный лимит
 # 24.10: последнее звено — AI Horde (бесплатно, без регистрации, очередь 15–20 мин).
 # Заказ уходит сразу, как появилась новость (запуск в :38), забираем при неудаче Cloudflare.
 HORDE = "https://aihorde.net/api/v2/generate/"
@@ -154,27 +155,44 @@ def картинка(к: dict[str, str], описание: str, куда: Path) 
     модели = ["@cf/black-forest-labs/flux-1-schnell"]
     if счёт.get(сегодня, 0) < KLEIN_В_СУТКИ:
         модели.insert(0, "@cf/black-forest-labs/flux-2-klein-9b")
+    if СУТКИ_ЗАКРЫТЫ.exists() and СУТКИ_ЗАКРЫТЫ.read_text(encoding="utf-8").strip() == сегодня:
+        журнал("  Cloudflare: суточный лимит кончился раньше — сразу дальше по цепочке")
+        return None
     for модель in модели:
-        try:
-            if модель.endswith("schnell"):
-                о = облако(к, модель, json_тело={"prompt": описание + хвост, "steps": 8})
-            else:
-                о = облако(к, модель, форма={"prompt": описание + хвост, "width": 1024, "height": 576})
-            данные = base64.b64decode(о["result"]["image"])
-            if len(данные) < 20_000:
-                raise ValueError("мала")
-            куда.write_bytes(данные)
-            if "klein" in модель:
-                СЧЁТ_KLEIN.write_text(json.dumps({сегодня: счёт.get(сегодня, 0) + 1}), encoding="utf-8")
-            return модель.rsplit("/", 1)[-1]
-        except Exception as e:
-            # 24.10: пишем и текст отказа Cloudflare — «429» бывает и суточным лимитом, и частотой
-            текст = ""
+        # 24.10, её просьба: сбой разбирать и решать самому. Отказ читаем по тексту:
+        # суточный лимит — Cloudflare до 00:00 UTC не трогаем; временный (частота,
+        # перегрузка, 5xx) — две повторные попытки с паузой; брак картинки — следующая модель.
+        for попытка in range(3):
             try:
-                текст = e.read().decode("utf-8", "replace")[:200] if hasattr(e, "read") else ""
-            except Exception:
-                pass
-            журнал(f"  {модель.rsplit('/', 1)[-1]}: {type(e).__name__} {getattr(e, 'code', '')} {текст}")
+                if модель.endswith("schnell"):
+                    о = облако(к, модель, json_тело={"prompt": описание + хвост, "steps": 8})
+                else:
+                    о = облако(к, модель, форма={"prompt": описание + хвост, "width": 1024, "height": 576})
+                данные = base64.b64decode(о["result"]["image"])
+                if len(данные) < 20_000:
+                    raise ValueError("мала")
+                куда.write_bytes(данные)
+                if "klein" in модель:
+                    СЧЁТ_KLEIN.write_text(json.dumps({сегодня: счёт.get(сегодня, 0) + 1}), encoding="utf-8")
+                return модель.rsplit("/", 1)[-1]
+            except Exception as e:
+                текст = ""
+                try:
+                    текст = e.read().decode("utf-8", "replace")[:300] if hasattr(e, "read") else ""
+                except Exception:
+                    pass
+                код = getattr(e, "code", "")
+                журнал(f"  {модель.rsplit('/', 1)[-1]}: {type(e).__name__} {код} {текст}")
+                низ = текст.lower()
+                if "3036" in низ or "neuron" in низ or "daily" in низ or "free allocation" in низ:
+                    СУТКИ_ЗАКРЫТЫ.write_text(сегодня, encoding="utf-8")
+                    журнал("  Cloudflare: это суточный лимит — до 03:00 МСК рисует следующее звено")
+                    return None
+                if код in (429, 500, 502, 503, 504) or isinstance(e, (TimeoutError, OSError)) and not код:
+                    if попытка < 2:
+                        time.sleep(20 * (попытка + 1))
+                        continue
+                break  # не временный сбой или попытки кончились — следующая модель
     # 24.10: Pollinations из рисования убран — обложка 14:00 вышла кривой (мутно,
     # искажённые лица), её оценка «кривая». После schnell — текстом в :10.
     return None

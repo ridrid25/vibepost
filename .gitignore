@@ -39,3 +39,4 @@ cloudflare.env
 сравнение-обложек-*.jpg
 __pycache__/
 oblozhki-klein.json
+oblozhki-cf-limit.txt
