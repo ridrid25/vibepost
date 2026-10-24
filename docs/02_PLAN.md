@@ -223,7 +223,7 @@ TikTok остаётся на прежней ветке. Content Brigade по с�
 
 | Звено | Цепочка | Состояние |
 |---|---|---|
-| Обложка новости часа | Кодекс (до :47) → FLUX.2 klein (Cloudflare) → FLUX.1 schnell (Cloudflare) → Pollinations → текстом в :10 | ✅ 24.10, проверено пробой: Cloudflare 429 → Pollinations за 34 с |
+| Обложка новости часа | Кодекс (до :47) → FLUX.2 klein (Cloudflare) → FLUX.1 schnell (Cloudflare) → текстом в :10 | ✅ 24.10; Pollinations убран — обложка 14:00 «кривая» |
 | Описание сцены для обложки | Cloudflare Llama 3.3 → Pollinations текст → общая сцена | ✅ 24.10 |
 | Выбор и текст новости часа | Gemini (Vertex) → Pollinations текст (без ключа) → час пропускается | ✅ 24.10, проба «безGemini» — Pollinations выбрал и написал новость |
 | Источники новостей | 10 каналов t.me/s | ✅ много, отказ одного не страшен |
