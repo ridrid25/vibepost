@@ -105,7 +105,17 @@ def сцена(к: dict[str, str], текст: str) -> str:
         if 20 < len(s) < 700:
             return s
     except Exception as e:
-        журнал(f"  сцена: {type(e).__name__}")
+        журнал(f"  сцена (Cloudflare): {type(e).__name__}")
+    # следующее звено: бесплатный текстовый помощник Pollinations (не зависит от лимита Cloudflare)
+    try:
+        тело = json.dumps({"messages": [{"role": "user", "content": указание}], "model": "openai"}).encode()
+        запрос = urllib.request.Request("https://text.pollinations.ai/openai", data=тело,
+                                        headers={"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"})
+        s = json.load(urllib.request.urlopen(запрос, timeout=90))["choices"][0]["message"]["content"].strip().strip('"')
+        if 20 < len(s) < 700:
+            return s
+    except Exception as e:
+        журнал(f"  сцена (Pollinations): {type(e).__name__}")
     return ("cinematic editorial illustration about money and the economy: a city at dusk, "
             "office towers, banknotes and coins on a desk, dramatic warm light")
 
@@ -129,6 +139,39 @@ def картинка(к: dict[str, str], описание: str, куда: Path) 
             return модель.rsplit("/", 1)[-1]
         except Exception as e:
             журнал(f"  {модель.rsplit('/', 1)[-1]}: {type(e).__name__} {getattr(e, 'code', '')}")
+    # 24.10, её правило «одно не работает — идём следующим вариантом»: Cloudflare
+    # исчерпан → бесплатный Pollinations (1 картинка / 45 с с адреса, надпись в углу срезаем).
+    return поллинейшнс(описание + хвост, куда)
+
+
+def поллинейшнс(описание: str, куда: Path) -> str | None:
+    import random
+    import urllib.parse
+    from PIL import Image
+    for попытка in range(2):
+        if попытка:
+            time.sleep(50)
+        адрес = ("https://image.pollinations.ai/prompt/" + urllib.parse.quote(описание)
+                 + f"?width=1920&height=1080&nologo=true&seed={random.randint(1, 10_000_000)}")
+        try:
+            данные = urllib.request.urlopen(
+                urllib.request.Request(адрес, headers={"User-Agent": "Mozilla/5.0"}), timeout=180).read()
+            сырое = куда.with_suffix(".raw.jpg")
+            сырое.write_bytes(данные)
+            with Image.open(сырое) as im:
+                im = im.convert("RGB")
+                w, h = im.size
+                нх = int(h * 0.91)                     # срезаем низ с надписью pollinations.ai
+                нш = min(w, int(нх * 16 / 9))
+                слева = (w - нш) // 2
+                im = im.crop((слева, 0, слева + нш, нх))
+                if im.height < 512:
+                    im = im.resize((int(512 * 16 / 9), 512), Image.Resampling.LANCZOS)
+                im.save(куда, format="JPEG", quality=94)
+            сырое.unlink(missing_ok=True)
+            return "pollinations"
+        except Exception as e:
+            журнал(f"  pollinations: {type(e).__name__} {getattr(e, 'code', '')}")
     return None
 
 
