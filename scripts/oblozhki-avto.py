@@ -113,9 +113,15 @@ def сцена(к: dict[str, str], текст: str) -> str:
 def картинка(к: dict[str, str], описание: str, куда: Path) -> str | None:
     хвост = (", bright vivid lighting, rich detail, wide 16:9 composition, "
              "no text, no letters, no numbers, no arrows, no logos, no watermark")
-    for модель in ("@cf/black-forest-labs/flux-2-dev", "@cf/black-forest-labs/flux-2-klein-9b"):
+    # 24.10: FLUX.2 dev ≈ 7 400 нейронов за картинку при бесплатных 10 000 в сутки —
+    # одна обложка в день, дальше 429. Теперь klein 1024×576 (≈ 900, ~10 в день),
+    # за ним schnell (≈ 330) — он без размеров, квадрат 1024; deliver обрежет под 16:9.
+    for модель in ("@cf/black-forest-labs/flux-2-klein-9b", "@cf/black-forest-labs/flux-1-schnell"):
         try:
-            о = облако(к, модель, форма={"prompt": описание + хвост, "width": 1344, "height": 768})
+            if модель.endswith("schnell"):
+                о = облако(к, модель, json_тело={"prompt": описание + хвост, "steps": 8})
+            else:
+                о = облако(к, модель, форма={"prompt": описание + хвост, "width": 1024, "height": 576})
             данные = base64.b64decode(о["result"]["image"])
             if len(данные) < 20_000:
                 raise ValueError("мала")
