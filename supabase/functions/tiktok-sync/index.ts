@@ -155,8 +155,11 @@ async function captureAll(
   for (let page = 0; page < 10; page++) {
     const response = await listVideos(accessToken, cursor);
     const fingerprint = await saveFixture(admin, context, "/v2/video/list/", response);
-    observeSchema("/v2/video/list/", fingerprint);
     const videos = videosFromResponse(response);
+    // 19.10.2026 ТикТок один раз прислал пустой список: у такого ответа нет полей
+    // ролика, отпечаток другой, и защита сбросила утверждённую схему — статистика
+    // не писалась шесть дней. Пустая страница о форме роликов ничего не говорит.
+    if (videos.length) observeSchema("/v2/video/list/", fingerprint);
     for (const video of videos) if (typeof video.id === "string") ids.add(video.id);
     seen += videos.length;
     written += await saveRawVideos(admin, context, "/v2/video/list/", response);
@@ -402,7 +405,10 @@ async function synchronizeClaimedAccount(
       account.verified_endpoint_fingerprints ?? {},
       capture.schemaObservations,
     );
-    const schemaApprovalUpdate = schemaStillVerified
+    // Нечего сверять (одни пустые ответы) — утверждение не трогаем.
+    const schemaApprovalUpdate = capture.schemaObservations.length === 0
+      ? {}
+      : schemaStillVerified
       ? { schema_status: "verified" }
       : {
           schema_status: "fixture_captured",
