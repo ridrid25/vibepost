@@ -314,6 +314,33 @@ if (окна.length) {
   }
 }
 
+// ── 17. Не меньше пяти динамичных движений камеры (заказчица 25.10.2026) ──
+// «Не от 1 до 5 движений, а 5 не меньше. Динамичных движений!» Движение
+// засчитывается по глаголу быстрого пути в поле камеры; виды считаются отдельно,
+// чтобы одно и то же движение пять раз не прошло как пять.
+{
+  const ВИДЫ = {
+    'хлёсткий перевод': /\b(whip|whips|whipping|snap|snaps|swings?)\b/,
+    'рывок к цели': /\b(rush|rushes|races?|racing|charges?|lunges?|hurls?|darts?|darting|flies|flying|shoots?)\b/,
+    'спуск': /\b(drops?|dropping|plunges?|dives?|diving|falls?)\b/,
+    'подъём': /\b(rises?|rising|soars?|climbs?|lifts?|swoops? up)\b/,
+    'облёт': /\b(orbits?|circles?|circling|arcs?|round the|around the|wheels?)\b/,
+    'наезд броском': /\b(rams?|crash(es)? in|slams? in|jolts?|jolting|punch(es)? in)\b/,
+    'проход сквозь': /\b(through the|threads?|skims?|skimming|weaves?)\b/,
+  };
+  const биты = Array.isArray(промт.timeline) ? промт.timeline : [];
+  const виды = new Set();
+  let движений = 0;
+  for (const б of биты) {
+    const кам = String(б?.c ?? б?.camera ?? '').toLowerCase();
+    const нашлось = Object.entries(ВИДЫ).filter(([, р]) => р.test(кам)).map(([в]) => в);
+    if (нашлось.length) { движений++; нашлось.forEach((в) => виды.add(в)); }
+  }
+  if (движений < 5) плохо(`динамичных движений камеры ${движений}, нужно не меньше пяти (заказчица 25.10)`);
+  if (виды.size < 3) плохо(`виды движения камеры: ${[...виды].join(', ') || 'нет'} — одно и то же движение подряд, нужно разные`);
+  заметки.push(`движения камеры: ${движений}, виды: ${[...виды].join(', ')}`);
+}
+
 // ── 16. Подмены полёта (тред Кодекса 23.10.2026) ──────────────────────────
 // На «extreme speed» генератор рисовал полосы скорости вместо движения камеры,
 // а на «camera flies to the paw» — чужие руки от объектива.
