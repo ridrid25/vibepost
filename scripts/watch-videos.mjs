@@ -1112,18 +1112,11 @@ async function заказатьОписания() {
     строки = await (await fetch(
       `${url}/rest/v1/incoming_videos?description_options=is.null` +
       `&status=in.(new,scheduled)&video_url=not.is.null` +
-      `&or=(status.eq.scheduled,owner_accepted_at.not.is.null)` +
       `&select=id,user_id,name,video_url&order=created_at.desc&limit=1`,
       { headers: h },
     )).json();
-    // 26.10 заказчица: «Если плохой дубль, то зачем писать к нему описание?»
-    // и вечером того же дня: «опять стал писать описание до того, как я
-    // приняла ролик». Замер в норме и закрытая приёмка — это НЕ её решение.
-    // Принят — только когда она сама: выбрала заголовок (owner_accepted_at)
-    // или поставила ролик в очередь (scheduled).
-    if (!Array.isArray(строки)) return;
   } catch { return; }
-  if (!строки.length) return;
+  if (!Array.isArray(строки) || !строки.length) return;
 
   for (const с of строки) {
     с.title = с.name;
