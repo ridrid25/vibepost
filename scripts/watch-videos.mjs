@@ -1112,28 +1112,16 @@ async function заказатьОписания() {
     строки = await (await fetch(
       `${url}/rest/v1/incoming_videos?description_options=is.null` +
       `&status=in.(new,scheduled)&video_url=not.is.null` +
-      `&select=id,user_id,name,video_url,status,measure_avg,measure_worst` +
-      `&order=created_at.desc&limit=10`,
+      `&or=(status.eq.scheduled,owner_accepted_at.not.is.null)` +
+      `&select=id,user_id,name,video_url&order=created_at.desc&limit=1`,
       { headers: h },
     )).json();
     // 26.10 заказчица: «Если плохой дубль, то зачем писать к нему описание?»
-    // Описание — только принятому ролику: она поставила его в очередь сама,
-    // или замер в норме и по ролику не висит ни приёмка, ни переделка.
+    // и вечером того же дня: «опять стал писать описание до того, как я
+    // приняла ролик». Замер в норме и закрытая приёмка — это НЕ её решение.
+    // Принят — только когда она сама: выбрала заголовок (owner_accepted_at)
+    // или поставила ролик в очередь (scheduled).
     if (!Array.isArray(строки)) return;
-    const принятые = [];
-    for (const с of строки) {
-      if (с.status !== 'scheduled') {
-        if (!(Number(с.measure_avg) >= НОРМА_СРЕДНЕЕ && Number(с.measure_worst) >= НОРМА_ХУДШАЯ)) continue;
-        const висят = await (await fetch(
-          `${url}/rest/v1/claude_tasks?video_id=eq.${с.id}&status=eq.new&select=id&limit=1`,
-          { headers: h },
-        )).json();
-        if (!Array.isArray(висят) || висят.length) continue;
-      }
-      принятые.push(с);
-      break;
-    }
-    строки = принятые;
   } catch { return; }
   if (!строки.length) return;
 
