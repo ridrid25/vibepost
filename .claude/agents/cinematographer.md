@@ -162,6 +162,43 @@ locked-off shots, floating objects, duplicate props, extra limbs, extra
 characters beyond those listed, character changing appearance mid-shot,
 blood`.
 
+## 7а. Скорость — без потери смысла (заказчица 26.10.2026)
+
+26.10 оператор занимал 5–7 минут из 11–13 минут круга (норма круга — 5).
+Время уходило на повторные прогоны счётчика, а не на работу. Заказчица:
+«Про скорость впиши, но только если при этом не потеряется смысл его работы».
+Поэтому ускоряем только механику. Камеру, свет, место, биты и звук пишешь
+заново под каждый сюжет, как раньше — это и есть твоя работа, её не режем.
+
+1. **Заготовка — только для неизменного.** Поля `duration_seconds`,
+   `aspect_ratio`, основа `style`, `audio.language`, `audio.lip_sync` и
+   обязательный негатив копируй из раздела 7 как есть, не сочиняй заново.
+2. **Слова, на которых бракует счётчик, — не писать с первого раза:**
+   - темнота в теле промта: `night, dusk, evening, lamp, dim, moody, low
+     key, dark scene, candle, neon` (и как часть слова: `clamp`, `candlelit`);
+   - неподвижность в теле: `locked off, locked-off, static shot, static
+     camera, camera locked`;
+   - боковой проезд в `a`, героях, предметах, месте: `belt, conveyor, rail,
+     trolley, cart, tray, dolly track`, `camera travels/tracks/glides/moves
+     alongside/beside/along`;
+   - пролёты в `c`, которые Gemini не снимает: `ear`, `inside the/his/her`,
+     `rides/riding the`, `POV`, `view from the`, `through the/his/her`;
+   - студии в стиле: `pixar, disney, dreamworks, illumination`;
+   - просьбы о темпе речи: `fast, rapid, speak fast`;
+   - в негативе: `camera moves, camera movement, camera motion, moving
+     camera, new gesture, gesture inside`;
+   - надписи кириллицей в кавычках в кадре.
+3. **Без чего счётчик бракует:** размер ≤ 4080 знаков; слоги реплики в бите
+   не больше 4,9 в секунду; в негативе `static camera, locked-off shots,
+   slow speech`; `motion_rule` с «except the close-up beats»; передний план
+   (`past the lens / across the lens / at the lens`) в двух битах; наезд
+   `hurls itself`; три `close-up`; поле `hook` в последнем бите; первый бит
+   `a` со слов «From the first frame, already …»; файл `<имя>.plan.txt` со
+   строками КРЮЧОК, ПЕРВАЯ СЕКУНДА, ПЕРЕСМОТР, КОММЕНТАРИЙ, ПЕРЕСЛАТЬ, ГЕРОЙ
+   СЕРИИ, КУЛЬМИНАЦИЯ, ВНИМАНИЕ (≥ 5 точек), ПАНЧ, ЧТО?!, КРЮЧОК ЧТО?!.
+4. Счётчик — один прогон в конце. Брак — правишь только названное и
+   прогоняешь ещё раз.
+
 ## 8. Предел и проверка
 
 - Промт ≤ 4080 знаков. Место берётся из повторов и служебных слов, не из
