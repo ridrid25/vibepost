@@ -192,14 +192,27 @@ async function handleCommand(
         status: "rework", rework_note: текст, rework_at: сейчас, rework_ack_at: сейчас,
         ready: false, owner_accepted_at: null,
       }).eq("id", profile.awaiting_video_id);
-      await admin.from("claude_tasks").insert({
-        user_id: profile.id, video_id: profile.awaiting_video_id, idea_id: ролик?.idea_id ?? null,
-        text: ждём === "sound"
-          ? `ПРАВКА ЗВУКА, промт не переписывать. ${текст}. Порядок — ` +
-            `docs/07_ПРАВИЛА.md, «Брак в звуке чинится звуком»: распознать по ` +
-            `словам, найти донора в прошлом дубле, пересадить, вернуть роликом в бота.`
-          : `${текст}.${trustedVideoContext(ролик)}`,
-      });
+      // 26.10.2026: кнопка «Не годится» уже завела задание. Её текст — не
+      // второе задание, а дополнение к первому: иначе два исполнителя на один
+      // ролик и два промта подряд (правило 30.08).
+      const { data: открытое } = ждём === "sound" ? { data: null } : await admin.from("claude_tasks")
+        .select("id,text").eq("video_id", profile.awaiting_video_id)
+        .in("status", ["new", "processing", "in_progress"])
+        .ilike("text", "Заказчица нажала «Не годится»%").limit(1);
+      if (открытое?.length) {
+        await admin.from("claude_tasks")
+          .update({ text: `${открытое[0].text} ЕЁ ЗАМЕЧАНИЕ: ${текст}.` })
+          .eq("id", открытое[0].id);
+      } else {
+        await admin.from("claude_tasks").insert({
+          user_id: profile.id, video_id: profile.awaiting_video_id, idea_id: ролик?.idea_id ?? null,
+          text: ждём === "sound"
+            ? `ПРАВКА ЗВУКА, промт не переписывать. ${текст}. Порядок — ` +
+              `docs/07_ПРАВИЛА.md, «Брак в звуке чинится звуком»: распознать по ` +
+              `словам, найти донора в прошлом дубле, пересадить, вернуть роликом в бота.`
+            : `${текст}.${trustedVideoContext(ролик)}`,
+        });
+      }
       ответ = ждём === "sound"
         ? `Записал: «${текст.slice(0, 80)}». Чиню звук донором из прошлого дубля — ` +
           `картинку не трогаю, промт не переписываю. Пришлю готовый ролик сюда.`
@@ -957,14 +970,37 @@ async function решениеПоРолику(
     awaiting_task: false,
   }).eq("id", profile.id);
 
+  // 26.10.2026, заказчица: «Я нажимаю "Не годится" — и все бегут
+  // переписывать». Задание бригаде заводится сразу по кнопке, текста не
+  // ждём. Если она допишет замечание следующим сообщением, оно приклеится к
+  // этому же заданию (см. ветку awaiting_kind === "note"), второго не будет.
+  if (что === "no") {
+    const сейчас = new Date().toISOString();
+    await admin.from("incoming_videos").update({
+      status: "rework", rework_note: "Не годится (кнопка)", rework_at: сейчас,
+      rework_ack_at: сейчас, ready: false, owner_accepted_at: null,
+    }).eq("id", videoId);
+    const { data: ужеЕсть } = await admin.from("claude_tasks")
+      .select("id").eq("video_id", videoId).in("status", ["new", "processing", "in_progress"])
+      .limit(1);
+    if (!ужеЕсть?.length) {
+      await admin.from("claude_tasks").insert({
+        user_id: profile.id, video_id: videoId, idea_id: ролик?.idea_id ?? null,
+        text: `Заказчица нажала «Не годится» по ролику «${кто}». Перепиши промт сам: ` +
+          `разбери ролик по кадрам и по плану, найди, что не сыграно, и почини это, ` +
+          `остальное не трогай.` + trustedVideoContext(ролик),
+      });
+    }
+  }
+
   // Заголовок придумывает Claude, Татьяна только выбирает. Печатать ей
   // ничего не нужно — но свой вариант всегда можно прислать текстом.
   const естьВарианты = что === "ok" && варианты.length > 0;
   const текст = что !== "ok"
-    ? `Ролик «${кто}»: расскажите, что хотите.
+    ? `Ролик «${кто}»: переписываю промт. Бригада уже пошла работать.
 
-Напишите следующим сообщением — что не нравится или каким должен быть кадр. ` +
-      `Перепишу промт по-вашему. Титры пока не вешаю.`
+Если есть мысль, что не так или каким должен быть кадр, — напишите следующим ` +
+      `сообщением, добавлю к заданию. Титры не вешаю.`
     : естьВарианты
     ? `Ролик «${кто}» годится. Выберите заголовок в кадр:
 
