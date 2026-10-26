@@ -337,7 +337,7 @@ if (окна.length) {
 // стоять в первом бите как уже существующее.
 {
   const первый = String(биты[0]?.a ?? '').toLowerCase();
-  if (биты.length && !/(already|from the (very )?first frame)/.test(первый)) {
+  if (биты.length && !/\b(already|from the (very )?first frame)\b/.test(первый)) {
     плохо(`${биты[0].t}: неожиданность первого кадра не заявлена как уже существующая — начни бит со слов ` +
       '«From the first frame, already …» и назови странное (модель иначе начинает с обычной сцены)');
   }
@@ -430,6 +430,27 @@ if (/pixar|disney|dreamworks|illumination/.test(телоБезНегатива))
           '«top-down over the table», «over her shoulder». Остальное не трогай');
         break;
       }
+    }
+  }
+}
+
+// ── 21. Слова, на которых Gemini отказывается снимать (27.10.2026) ────────
+// Медведь 26.10: с 20:40 в промтах «hanging on a rope by his ankle», в двух
+// последних — «noose». Фильтр Gemini читает это как повешение и не делает
+// видео; заказчица пять раз снимала через Flow и получала брак. Счётчик
+// ловит такие слова до отправки.
+{
+  const ОТКАЗ = [
+    [/\bnoose\b/, 'noose — удавка'],
+    [/\b(hang|hangs|hanging|hanged|hung)\b[^.;]{0,40}\brope\b|\brope\b[^.;]{0,40}\b(hang|hangs|hanging|hanged|hung)\b/, 'висит на верёвке — читается как повешение'],
+    [/\b(strangl|chok|suffocat|asphyx)\w*/, 'удушение'],
+    [/\b(by|around) (his|her|the) neck\b/, 'за шею'],
+  ];
+  for (const [р, что] of ОТКАЗ) {
+    const м = телоБезНегатива.match(р);
+    if (м) {
+      плохо(`Gemini откажется снимать: «${м[0]}» (${что}). Убери верёвку и подвешивание совсем — ` +
+        'замени на другой приём (держит за ногу лапой, качается на ветке, поднят краном-лапой), без слов hang/rope/noose');
     }
   }
 }
