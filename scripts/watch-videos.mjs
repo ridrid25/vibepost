@@ -256,23 +256,14 @@ async function вБота(текст, кнопки) {
     const token = await (await fetch(`${url}/rest/v1/rpc/get_bot_token`, {
       method: 'POST', headers: h, body: JSON.stringify({ p_secret_id: b.token_secret_id }),
     })).json();
-    // 27.10.2026: замер 00:32 до заказчицы не дошёл, а ошибка пропала молча.
-    // Теперь отказ Telegram пишется в журнал, и отправка повторяется один раз.
-    for (let попытка = 0; попытка < 2; попытка++) {
-      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chat_id: p.error_notify_tg_id, text: текст,
-          ...(кнопки ? { reply_markup: { inline_keyboard: кнопки } } : {}),
-        }),
-      });
-      if (r.ok) return;
-      console.log(`[бот] не отправилось (${r.status}): ${(await r.text()).slice(0, 120)}`);
-      await new Promise((з) => setTimeout(з, 3000));
-    }
-  } catch (e) {
-    console.log(`[бот] не отправилось: ${String(e.message).slice(0, 100)}`);
-  }
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: p.error_notify_tg_id, text: текст,
+        ...(кнопки ? { reply_markup: { inline_keyboard: кнопки } } : {}),
+      }),
+    });
+  } catch { /* без связи — не беда, обработка важнее */ }
 }
 
 /**
