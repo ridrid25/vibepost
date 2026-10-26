@@ -1112,6 +1112,11 @@ async function заказатьОписания() {
     строки = await (await fetch(
       `${url}/rest/v1/incoming_videos?description_options=is.null` +
       `&status=in.(new,scheduled)&video_url=not.is.null` +
+      // Заказчица 26.10, трижды за день: «Если плохой дубль, то зачем писать
+      // к нему описание?» Описание — только принятому ЕЮ ролику: выбрала
+      // заголовок (owner_accepted_at) или поставила в очередь (scheduled).
+      // Замер в норме и закрытая приёмка — не её решение.
+      `&or=(status.eq.scheduled,owner_accepted_at.not.is.null)` +
       `&select=id,user_id,name,video_url&order=created_at.desc&limit=1`,
       { headers: h },
     )).json();
