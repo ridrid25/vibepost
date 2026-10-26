@@ -337,7 +337,7 @@ if (окна.length) {
 // стоять в первом бите как уже существующее.
 {
   const первый = String(биты[0]?.a ?? '').toLowerCase();
-  if (биты.length && !/(already|from the (very )?first frame)/.test(первый)) {
+  if (биты.length && !/\b(already|from the (very )?first frame)\b/.test(первый)) {
     плохо(`${биты[0].t}: неожиданность первого кадра не заявлена как уже существующая — начни бит со слов ` +
       '«From the first frame, already …» и назови странное (модель иначе начинает с обычной сцены)');
   }
