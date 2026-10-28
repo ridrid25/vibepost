@@ -935,9 +935,11 @@ async function решениеПоРолику(
     // после этого нажать «Переписывай сам», на один ролик повиснет два задания
     // об одном и том же — 10.09.2026 заказчица получила ровно это. Второе не
     // заводим, просто подтверждаем, что дело уже в работе.
+    // Проверка смысла («…не проверен… Не переписывай промт») — не переписывание:
+    // 28.10.2026 она перехватила нажатие, и промт не переписал никто.
     const { data: ужеЕсть } = await admin.from("claude_tasks")
       .select("id").eq("video_id", videoId).in("status", ["new", "in_progress", "rework"])
-      .ilike("text", "%промт%").limit(1);
+      .ilike("text", "%промт%").not("text", "ilike", "Смысл ролика%не проверен%").limit(1);
     if (!ужеЕсть?.length) {
       await admin.from("claude_tasks").insert({
         user_id: profile.id, video_id: videoId, idea_id: ролик?.idea_id ?? null,
@@ -982,7 +984,7 @@ async function решениеПоРолику(
     }).eq("id", videoId);
     const { data: ужеЕсть } = await admin.from("claude_tasks")
       .select("id").eq("video_id", videoId).in("status", ["new", "processing", "in_progress"])
-      .limit(1);
+      .not("text", "ilike", "Смысл ролика%не проверен%").limit(1);
     if (!ужеЕсть?.length) {
       await admin.from("claude_tasks").insert({
         user_id: profile.id, video_id: videoId, idea_id: ролик?.idea_id ?? null,
