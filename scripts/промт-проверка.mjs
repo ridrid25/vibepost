@@ -15,6 +15,7 @@
  * Скрипт ничего не правит. Он говорит, что не так, и возвращает код 1.
  */
 import { readFileSync } from 'node:fs';
+import { CAMERA_MOVEMENT_FAMILIES, cameraField, cameraMovementFamilies, hasOpeningFlight, hasForbiddenSideTracking } from './lib/brigade-camera.mjs';
 
 const [файл, эталон] = process.argv.slice(2);
 if (!файл) {
@@ -285,13 +286,17 @@ if (надписи) {
   const ракурсы = new Set(биты.map((б) => String(б?.c ?? б?.camera ?? '').toLowerCase().trim()).filter(Boolean));
   const передний = биты.filter((б) => /foreground|at the lens|past the lens|across the lens|in front of the lens/i
     .test(`${б?.a ?? ''} ${б?.c ?? ''}`)).length;
-  const наезд = биты.some((б) => /hurls? itself|rushes? (in|at|to)|camera (dives|flies|charges) (in|at|to)/i
+  // 29.10.2026: термины кино (dolly-in, crash zoom) генератор играет, метафоры — нет.
+  const наезд = биты.some((б) => /hurls? itself|rushes? (in|at|to)|camera (dives|flies|charges) (in|at|to)|dolly[- ]in|crash[- ]zoom/i
     .test(`${б?.a ?? ''} ${б?.c ?? ''}`));
   // Опыт закончен 25.10 — три пункта стали правилом 64.
   заметки.push(`камера: ракурсов ${ракурсы.size}, передний план в ${передний} битах, наезд броском: ${наезд ? 'есть' : 'нет'}`);
   if (ракурсы.size < 4) совет(`разных ракурсов ${ракурсы.size}, нужно не меньше четырёх (правило 64)`);
   if (передний < 2) совет(`передний план в ${передний} битах, нужно не меньше двух (правило 64)`);
-  if (!наезд) совет('нет наезда броском камеры («the camera hurls itself …») — правило 64');
+  if (!наезд) совет('нет наезда броском камеры («fast dolly-in into extreme close-up of …») — правило 64');
+  // 29.10.2026: «cat-sized» нарисовал за столом котов вместо клещей.
+  const мерка = JSON.stringify(промт).match(/\b(cat|dog|mouse|rat|horse|elephant|bear|kitten|puppy|coin|ant)[- ]sized\b/i);
+  if (мерка) плохо(`размер через другого зверя или предмет («${мерка[0]}») — генератор нарисует его; писать «size of his paw», «knee-high to him»`);
 }
 
 // ── 14. Крючок в конце (правило 61, заказчица 25.10.2026) ─────────────────
@@ -313,8 +318,9 @@ if (окна.length) {
   if (тип) заметки.push(`крючок ${последний.бит.t}: ${тип}`);
 }
 
-// ── 15. Пять строк досмотра (правило 62, заказчица 25.10.2026) ────────────
-// Сценарий сдаёт: ПЕРВАЯ СЕКУНДА, ПЕРЕСМОТР, КОММЕНТАРИЙ, ПЕРЕСЛАТЬ, ГЕРОЙ СЕРИИ.
+// ── 15. План зрительского интереса (правила 61–62, уточнение 27.10.2026) ──
+// ДОСМОТР называет вопрос первого кадра и поздний ответ. Смысл проверяет критик,
+// здесь проверяется только наличие строки: заполнение не доказывает удержания.
 // Они лежат рядом с промтом в <имя>.plan.txt — без файла промт не годен.
 {
   const путьПлана = файл.replace(/\.json$/i, '.plan.txt');
@@ -323,7 +329,7 @@ if (окна.length) {
   if (!план) {
     плохо(`нет файла ${путьПлана.split(/[\\/]/).pop()} — строки сценариста по правилам 61–62 не сданы`);
   } else {
-    for (const поле of ['КРЮЧОК', 'ПЕРВАЯ СЕКУНДА', 'ПЕРЕСМОТР', 'КОММЕНТАРИЙ', 'ПЕРЕСЛАТЬ', 'ГЕРОЙ СЕРИИ', 'КУЛЬМИНАЦИЯ', 'ВНИМАНИЕ', 'ПАНЧ']) {
+    for (const поле of ['КРЮЧОК', 'ПЕРВАЯ СЕКУНДА', 'ДОСМОТР', 'ПЕРЕСМОТР', 'КОММЕНТАРИЙ', 'ПЕРЕСЛАТЬ', 'ГЕРОЙ СЕРИИ', 'КУЛЬМИНАЦИЯ', 'ВНИМАНИЕ', 'ПАНЧ']) {
       const м = план.match(new RegExp(`^\\s*${поле}\\s*:\\s*(.{${поле === 'ПАНЧ' ? 2 : 8},})$`, 'm'));
       if (!м) плохо(`в плане нет строки «${поле}:» с ответом (ПРИНЦИПЫ_ЗАВОДА, план сценариста)`);
       else if (поле === 'КУЛЬМИНАЦИЯ' && !/\d+[.,]\d/.test(м[1])) плохо('в строке КУЛЬМИНАЦИЯ нет секунды — куда вести взгляд (правило 63)');
@@ -377,18 +383,9 @@ if (окна.length) {
 // «Не от 1 до 5 движений, а 5 не меньше. Динамичных движений!» Движение
 // засчитывается по глаголу быстрого пути в поле камеры; виды считаются отдельно,
 // чтобы одно и то же движение пять раз не прошло как пять.
-const ВИДЫ_ДВИЖЕНИЯ = {
-    'хлёсткий перевод': /\b(whip|whips|whipping|snap|snaps|swings?)\b/,
-    'рывок к цели': /\b(rush|rushes|races?|racing|charges?|lunges?|hurls?|darts?|darting|flies|flying|shoots?)\b/,
-    'спуск': /\b(drops?|dropping|plunges?|dives?|diving|falls?)\b/,
-    'подъём': /\b(rises?|rising|soars?|climbs?|lifts?|swoops? up)\b/,
-    'облёт': /\b(orbits?|circles?|circling|arcs?|round the|around the|wheels?)\b/,
-    'наезд броском': /\b(rams?|crash(es)? in|slams? in|jolts?|jolting|punch(es)? in)\b/,
-    'проход сквозь': /\b(through the|threads?|skims?|skimming|weaves?)\b/,
-};
+const ВИДЫ_ДВИЖЕНИЯ = CAMERA_MOVEMENT_FAMILIES;
 const схемаДвижения = (п) => (Array.isArray(п.timeline) ? п.timeline : []).map((б) => {
-  const кам = String(б?.c ?? б?.camera ?? '').toLowerCase();
-  return Object.entries(ВИДЫ_ДВИЖЕНИЯ).filter(([, р]) => р.test(кам)).map(([в]) => в)[0] ?? '';
+  return cameraMovementFamilies(cameraField(б))[0] ?? '';
 });
 {
   const ВИДЫ = ВИДЫ_ДВИЖЕНИЯ;
@@ -396,8 +393,7 @@ const схемаДвижения = (п) => (Array.isArray(п.timeline) ? п.time
   const виды = new Set();
   let движений = 0;
   for (const б of биты) {
-    const кам = String(б?.c ?? б?.camera ?? '').toLowerCase();
-    const нашлось = Object.entries(ВИДЫ).filter(([, р]) => р.test(кам)).map(([в]) => в);
+    const нашлось = cameraMovementFamilies(cameraField(б));
     if (нашлось.length) { движений++; нашлось.forEach((в) => виды.add(в)); }
   }
   if (движений < 5) плохо(`динамичных движений камеры ${движений}, нужно не меньше пяти (заказчица 25.10)`);
@@ -444,11 +440,13 @@ if (/pixar|disney|dreamworks|illumination/.test(телоБезНегатива))
 // камеры (стоит камера — летит предмет), и поле c длиннее шести слов:
 // образец гиены v5 — 3–6 слов, в медведе 26.10 было до 17.
 {
-  const глаголКамеры = /\b(whips?|whipping|snaps?|snapping|swings?|swinging|rush(es)?|races?|racing|charges?|lunges?|lunging|hurls?|darts?|darting|flies|flying|shoots?|drops?|dropping|plunges?|dives?|diving|falls?|rises?|rising|soars?|climbs?|lifts?|lifting|swoops?|orbits?|circles?|circling|arcs?|arcing|wheels?|rams?|crash(es)?|slams?|jolts?|jolting|jerks?|jerking|punch(es)?|threads?|skims?|skimming|weaves?|rockets?|pulls? (back|up|out)|tilts?|tilting|tumbles?|tumbling|rolls?|rolling|spins?|spinning|rotates?|rotating|glides?|gliding|sweeps?|sweeping|cuts? to)\b/i;
-  const стоят = биты.filter((б) => б?.c !== undefined && !глаголКамеры.test(String(б.c)));
+  const стоят = биты.filter((б) => !cameraMovementFamilies(cameraField(б)).length);
   if (стоят.length) {
-    плохо(`камера стоит в битах ${стоят.map((б) => б.t).join(", ")}: в поле c нет движения камеры — ` +
-      "подлежащее в c камера, глагол её: arcs, dives into, whips round, hurls itself, swings overhead (заказчица 27.10)");
+    плохо(`нет заявленного движения камеры в битах ${стоят.map((б) => б.t).join(', ')}: ` +
+      'нужно c/camera с путём камеры; пустое поле, движение героя и «cuts to» его не заменяют');
+  }
+  if (биты.length && !hasOpeningFlight(cameraField(биты[0]))) {
+    плохо('в первом бите нет резкого полёта камеры к конфликту: команда полёта нужна в c/camera уже с кадра 0.00');
   }
   const длинные = биты.filter((б) => String(б?.c ?? '').split(/\s+/).filter(Boolean).length > 6);
   if (длинные.length) {
@@ -459,36 +457,9 @@ if (/pixar|disney|dreamworks|illumination/.test(телоБезНегатива))
 
 
 // ── Итог ──────────────────────────────────────────────────────────────────
-// Запрет заказчицы 22.09.2026: боковой проезд не брать вовсе.
-// На YouTube им сняты все четыре провала (5-12 просмотров), а три взлетевших
-// ролика (1185-1263) сняты другими схемами. Ищем по смыслу, а не по одному
-// обороту: раньше счётчик знал три формулировки, и двадцать одинаковых промтов
-// прошли как разные.
-{
-  // Смотрим только туда, где задаётся движение. Раздел запретов не трогаем:
-  // там слово belt стоит как раз для того, чтобы ленты НЕ было, и счётчик
-  // ругался на собственный запрет.
-  const всё = [
-    промт.motion_rule,
-    промт.character,
-    промт.second_characters,
-    промт.props,
-    промт.environment,
-    ...(Array.isArray(промт.timeline) ? промт.timeline.map((б) => б?.a ?? '') : []),
-  ].filter(Boolean).join(' ').toLowerCase();
-  const проезд = [
-    /\b(belt|conveyor|rail|trolley|cart|tray|dolly track)\b/,
-    /camera (travels?|tracks?|rides?|glides?|moves?) (alongside|beside|along|down the)/,
-    /(tracks?|travels?) (alongside|beside) (him|her|it|the)/,
-    /rides? (the|a) (belt|rail|cart|tray|trolley)/,
-  ].filter((р) => р.test(всё));
-  if (проезд.length) {
-    беды.push(
-      'схема «боковой проезд» запрещена заказчицей 22.09 — на YouTube ею сняты все ' +
-      'четыре провала. Возьми приём из меню камеры по моменту сюжета: облёт, ' +
-      'бросок, пролёт сквозь предмет, камера в глаз',
-    );
-  }
+// Прямой запрет бокового проезда сохраняется. Реквизит не является схемой камеры.
+if (hasForbiddenSideTracking(промт)) {
+  плохо('схема «боковой проезд вдоль героя» запрещена заказчицей (59); выбери другой путь камеры. Поднос, тележка и лента как реквизит сами по себе не запрещены');
 }
 
 // Правило 56 журнала: схема движения не повторяется третий раз подряд.
