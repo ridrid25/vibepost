@@ -1043,6 +1043,35 @@ async function разбудитьЕслиЖдут() {
 }
 
 /**
+ * Быстрая полоса описаний (заказчица 01.11.2026: «Почему так долго работает
+ * описание?»). Описание ждало 5,5 мин, пока основной дежурный вёл бригаду.
+ * Отдельный дежурный берёт только «Придумай описания»; второго такого же он
+ * не поднимет сам — замок dezhurny-opisaniya.pid. Зазор тот же, полминуты.
+ */
+const следОписаний = join(base, 'dezhurny-opisaniya-last.txt');
+async function разбудитьОписания() {
+  if (!url || !serviceKey) return;
+  let ждут;
+  try {
+    ждут = await (await fetch(
+      `${url}/rest/v1/claude_tasks?status=eq.new&text=like.${encodeURIComponent('Придумай описания*')}&select=id&limit=1`,
+      { headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}` } },
+    )).json();
+  } catch { return; }
+  if (!Array.isArray(ждут) || !ждут.length) return;
+  try {
+    if (Date.now() - statSync(следОписаний).mtimeMs < ЗАЗОР_МС) return;
+  } catch { /* следа нет — первый запуск */ }
+  writeFileSync(следОписаний, new Date().toISOString());
+  const пускач = fileURLToPath(new URL('Дежурный-описания.vbs', root));
+  const дитя = spawn('wscript.exe', ['//B', '//Nologo', пускач], {
+    detached: true, stdio: 'ignore', windowsHide: true,
+  });
+  дитя.unref();
+  console.log('[будильник] пришло описание — поднимаю полосу описаний');
+}
+
+/**
  * Полоса заводится сама на каждое задание.
  *
  * Раньше строку хода работы создавал Claude отдельной командой — и на задания
@@ -1461,6 +1490,7 @@ async function tick() {
     await подтвердитьДоделки();
     await двигатьПолосу();
     await разбудитьЕслиЖдут();
+    await разбудитьОписания();
     await просмотр(readyDir, false);
     await просмотр(dubDir, true);
     await просмотр(noSubsDir, false);
