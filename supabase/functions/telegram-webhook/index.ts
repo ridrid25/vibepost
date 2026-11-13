@@ -68,7 +68,7 @@ function ownerKeyboard(targetPlatform: string) {
       [{ text: `${тг ? "✅ " : ""}ТикТок/Телеграм` },
        { text: `${тг ? "" : "✅ "}YouTube-канал` }],
       [{ text: "📊 Статус" }, { text: "📅 Очередь" }, { text: "📥 Входящие" }],
-      [{ text: "💡 Идеи" }, { text: "📰 Дайджест" }],
+      [{ text: "💡 Идеи" }, { text: "🗂 Тема" }, { text: "📰 Дайджест" }],
       [{ text: "🎭 Герой серии" }, { text: "🙋 Позвать Claude" }],
       [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
     ],
@@ -121,6 +121,9 @@ async function handleCommand(
     if ((raw.includes("ютуб") || raw.includes("youtube")) && raw.includes("очередь")) cmd = "/yt_queue";
     else if ((raw.includes("ютуб") || raw.includes("youtube")) && raw.includes("стоп")) cmd = "/yt_stop";
     else if ((raw.includes("ютуб") || raw.includes("youtube")) && raw.includes("пуск")) cmd = "/yt_go";
+    // «🗂 Тема» сверяем целиком: подстрока «тема» сидит в слове «система», и
+    // её задание «система обвела меня» включило бы переключатель.
+    else if (raw.startsWith("🗂") || raw === "тема") cmd = "/tema";
     else if (raw.includes("статус")) cmd = "/status";
     else if (raw.includes("очередь")) cmd = "/queue";
     else if (raw.includes("сводка")) cmd = "/today";
@@ -390,7 +393,23 @@ async function handleCommand(
   // Если задан — шлём вторым сообщением как блок кода (одно касание = копия)
   let copyBlock: string | null = null;
 
-  if (cmd === "/pf_tg" || cmd === "/pf_yt") {
+  if (cmd === "/tema") {
+    // Тема идей — отдельный переключатель (заказчица 13.11.2026). Старая тема
+    // остаётся как была; новые добавлены рядом.
+    const { data: сейчас } = await admin.from("profiles").select("tema").eq("id", uid).maybeSingle();
+    const тек = String(сейчас?.tema ?? "dengi");
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: msg.chat.id,
+        text: `🗂 Сейчас тема идей: ${ТЕМА_ИМЯ[тек] ?? ТЕМА_ИМЯ.dengi}.` + СТРОКА + СТРОКА +
+          "Выберите, про что придумывать следующие идеи. Действует на кнопку «💡 Идеи» " +
+          "и на утреннюю партию.",
+        reply_markup: { inline_keyboard: темаКнопки(тек) },
+      }),
+    }).catch(() => {});
+    return;
+  } else if (cmd === "/pf_tg" || cmd === "/pf_yt") {
     const нов = cmd === "/pf_yt" ? TARGET_PLATFORMS.YOUTUBE_SHORTS : TARGET_PLATFORMS.TIKTOK;
     await admin.from("profiles").update({ target_platform: нов }).eq("id", uid);
     const текст = нов === TARGET_PLATFORMS.YOUTUBE_SHORTS
@@ -1056,6 +1075,58 @@ async function решениеПоРолику(
   }).catch(() => {});
 }
 
+const ТЕМА_ИМЯ: Record<string, string> = {
+  dengi: "💰 Деньги (как раньше)",
+  rabota: "💼 Работа",
+  poisk: "🧪 Поиск новых тем",
+};
+
+function темаКнопки(текущая: string) {
+  return Object.entries(ТЕМА_ИМЯ).map(([код, имя]) => [{
+    text: `${код === текущая ? "✅ " : ""}${имя}`,
+    callback_data: `tm:${код}`,
+  }]);
+}
+
+async function решениеПоТеме(
+  admin: SupabaseClient,
+  cq: { id: string; data: string; from: { id: number }; message?: { chat: { id: number }; message_id?: number } },
+) {
+  const выбор = String(cq.data).split(":")[1];
+  if (!ТЕМА_ИМЯ[выбор]) return;
+  const { data: profile } = await admin.from("profiles")
+    .select("id,error_notify_bot_id")
+    .eq("error_notify_tg_id", String(cq.from.id)).maybeSingle();
+  if (!profile?.error_notify_bot_id) return;
+  const { data: bot } = await admin.from("bots").select("token_secret_id")
+    .eq("id", profile.error_notify_bot_id).maybeSingle();
+  const { data: token } = await admin.rpc("get_bot_token", { p_secret_id: bot?.token_secret_id });
+  if (!token) return;
+
+  const { error } = await admin.from("profiles").update({ tema: выбор }).eq("id", profile.id);
+  await fetch(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      callback_query_id: cq.id,
+      text: error ? `Не сохранилось: ${error.message}` : `Тема: ${ТЕМА_ИМЯ[выбор]}`,
+    }),
+  }).catch(() => {});
+  if (error) return;
+  // Галочку переставляем в том же сообщении: видно, что выбрано.
+  if (cq.message?.message_id) {
+    await fetch(`https://api.telegram.org/bot${token}/editMessageText`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: cq.message.chat.id,
+        message_id: cq.message.message_id,
+        text: `🗂 Тема идей: ${ТЕМА_ИМЯ[выбор]}.` + СТРОКА + СТРОКА +
+          "Следующие идеи — про неё. Сменить — эта же кнопка «🗂 Тема».",
+        reply_markup: { inline_keyboard: темаКнопки(выбор) },
+      }),
+    }).catch(() => {});
+  }
+}
+
 async function решениеПоПлатформе(
   admin: SupabaseClient,
   cq: { id: string; data: string; from: { id: number }; message?: { chat: { id: number } } },
@@ -1192,6 +1263,10 @@ Deno.serve(async (req) => {
       // только запоминают, о каком ролике пойдёт речь дальше, — чтобы
       // следующее сообщение Татьяны не приходилось привязывать по времени.
       const данные = String(update.callback_query.data ?? "");
+      if (данные.startsWith("tm:")) {
+        await решениеПоТеме(admin, update.callback_query);
+        return json(200, { ok: true });
+      }
       if (данные.startsWith("pf:")) {
         await решениеПоПлатформе(admin, update.callback_query);
         return json(200, { ok: true });
