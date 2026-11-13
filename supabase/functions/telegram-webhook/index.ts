@@ -73,7 +73,10 @@ function ownerKeyboard(targetPlatform: string) {
       [{ text: "🩺 Как дела" }, { text: "🛠 Если сломалось" }],
     ],
     resize_keyboard: true,
-    is_persistent: true,
+    // 13.11.2026, заказчица: «Как свернуть/убрать большой список команд?»
+    // Закреплённое меню (is_persistent) Telegram прятать не даёт. Без него в
+    // поле ввода есть значок-переключатель: меню сворачивается одним касанием.
+    is_persistent: false,
   };
 }
 
