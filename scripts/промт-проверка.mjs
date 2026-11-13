@@ -16,6 +16,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { CAMERA_MOVEMENT_FAMILIES, cameraField, cameraMovementFamilies, hasOpeningFlight, hasForbiddenSideTracking } from './lib/brigade-camera.mjs';
+import { speechBeatBodyIssues } from './lib/speech-body.mjs';
 
 const [файл, эталон] = process.argv.slice(2);
 if (!файл) {
@@ -477,6 +478,16 @@ if (/pixar|disney|dreamworks|illumination/.test(телоБезНегатива))
   }
 }
 
+
+// ── 21. Говорящий двигается всем телом (заказчица 13.11.2026) ─────────────
+// Ревизия 04–13.11: первые дубли лягушки и обезьяны вставали в речевом бите —
+// герой лёг, сел на корточки, плюхнулся на спину и говорил оттуда. Подробности
+// и калибровка — в scripts/lib/speech-body.mjs.
+{
+  const стоят = speechBeatBodyIssues(промт);
+  for (const с of стоят) плохо(`бит ${с.t}: ${с.why}`);
+  if (!стоят.length && биты.some((б) => б.line)) заметки.push('в каждом речевом бите говорящий двигается всем телом');
+}
 
 // ── Итог ──────────────────────────────────────────────────────────────────
 // Прямой запрет бокового проезда сохраняется. Реквизит не является схемой камеры.
