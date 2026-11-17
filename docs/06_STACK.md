@@ -75,3 +75,4 @@
 | Own-result evidence | Generic `experiments` + `content_analysis_results` + `content_lesson_youtube_publications`; только provenance-complete пары |
 | Evidence schedule | Существующий `vibepost-content-brigade`, каждые 15 минут; strict pair discovery, регистрация и checkpoint-aware analysis без фиктивных A/B-пар |
 | Snapshot compatibility | `youtube_short_snapshots` — read-only view над `published_shorts_stats`, не новая таблица |
+| Запасной двигатель дежурного | Ключ Anthropic API (кредит тарифа Max, ~$100) в `.env` как `ANTHROPIC_API_KEY`. Включается только при лимите подписки, 17.11.2026 |

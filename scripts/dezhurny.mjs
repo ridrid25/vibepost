@@ -9,11 +9,19 @@
  * а здесь текст читается как UTF-8 и передаётся Claude без искажений.
  */
 import { spawn, execFileSync } from 'node:child_process';
-import { openSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, openSync, readFileSync, writeFileSync, writeSync, rmSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const корень = dirname(dirname(fileURLToPath(import.meta.url)));
+const паузаClaude = join(корень, 'CLAUDE_PAUSED');
+
+// Ручная пауза не должна превращаться в тревогу: планировщик может запускать
+// этот файл как прежде, но Claude и Telegram-уведомления не стартуют.
+if (existsSync(паузаClaude)) {
+  console.log('[пауза] Claude-бригада временно остановлена');
+  process.exit(0);
+}
 
 /**
  * Быстрая полоса описаний (заказчица 01.11.2026: «Почему так долго работает
@@ -263,22 +271,73 @@ if (!ПОЛОСА_ОПИСАНИЙ) await сброситьЕслиПросят()
 const имяЖурнала = ПОЛОСА_ОПИСАНИЙ ? 'dezhurny-opisaniya.log' : 'dezhurny.log';
 const журнал = openSync(join(корень, имяЖурнала), 'a');
 
-const дитя = spawn(
-  бинарь,
-  [
-    ...префикс,
-    '-p', ПОЛОСА_ОПИСАНИЙ ? ЗАДАНИЕ_ОПИСАНИЯ : ЗАДАНИЕ,
-    '--allowedTools', ПОЛОСА_ОПИСАНИЙ ? 'Bash,Read' : 'Bash,Read,Write,Edit,Glob,Grep',
-    // 13.11.2026: модель по умолчанию осталась без кредитов («You're out of
-    // usage credits»), и оба дежурных падали на старте — задания лежали.
-    // Opus доступен по той же подписке; модель задаём явно.
-    '--model', 'opus',
-  ],
-  // Не 'inherit': унаследованный вывод требует консоли, и Windows
-  // открывает поверх всего чёрное окно. Татьяна принимала его за
-  // зависший компьютер и не знала, можно ли закрывать. Пишем в журнал.
-  { cwd: корень, stdio: ['ignore', журнал, журнал] },
-);
+/**
+ * Запуск Claude. Обычно — на подписке Max. Запасной ключ API (заказчица
+ * 17.11.2026: «у меня есть апи на 95 долл, как их разумно использовать?»)
+ * включается, только когда подписка упёрлась в лимит: в журнале тысячи строк
+ * «You've hit your session limit», и задания лежали часами (08.11).
+ */
+function запустить(доп = {}) {
+  return new Promise((resolve) => {
+    const дитя = spawn(
+      бинарь,
+      [
+        ...префикс,
+        '-p', ПОЛОСА_ОПИСАНИЙ ? ЗАДАНИЕ_ОПИСАНИЯ : ЗАДАНИЕ,
+        '--allowedTools', ПОЛОСА_ОПИСАНИЙ ? 'Bash,Read' : 'Bash,Read,Write,Edit,Glob,Grep',
+        // 13.11.2026: модель по умолчанию осталась без кредитов («You're out of
+        // usage credits»), и оба дежурных падали на старте — задания лежали.
+        // Opus доступен по той же подписке; модель задаём явно.
+        '--model', 'opus',
+      ],
+      // Не 'inherit': унаследованный вывод требует консоли, и Windows
+      // открывает поверх всего чёрное окно. Татьяна принимала его за
+      // зависший компьютер и не знала, можно ли закрывать. Пишем в журнал.
+      { cwd: корень, stdio: ['ignore', журнал, журнал], env: { ...process.env, ...доп } },
+    );
+    дитя.on('exit', (код) => resolve(код ?? 0));
+    дитя.on('error', () => resolve(1));
+  });
+}
+
+function прочитатьEnv() {
+  const env = {};
+  try {
+    for (const строка of readFileSync(join(корень, '.env'), 'utf8').split(/\r?\n/)) {
+      const m = строка.match(/^([A-Za-z_0-9]+)=(.*)$/);
+      if (m) env[m[1]] = m[2].trim();
+    }
+  } catch { /* нет файла */ }
+  return env;
+}
+
+/** Сообщение в бот не чаще раза в 6 часов на метку. */
+async function сказатьРедко(метка, текст) {
+  const путь = join(корень, метка);
+  try {
+    if (Date.now() - Number(readFileSync(путь, 'utf8')) < 6 * 3600_000) return;
+  } catch { /* метки нет */ }
+  const env = прочитатьEnv();
+  if (!env.TELEGRAM_TEST_BOT_TOKEN || !env.ERROR_NOTIFY_TG_ID) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TEST_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: Number(env.ERROR_NOTIFY_TG_ID), text: текст }),
+      signal: AbortSignal.timeout(15000),
+    });
+    writeFileSync(путь, String(Date.now()));
+  } catch { /* нет сети */ }
+}
+
+function хвостЗапуска(начало) {
+  try {
+    return readFileSync(join(корень, имяЖурнала)).subarray(начало).toString('utf8');
+  } catch { return ''; }
+}
+
+const ЛИМИТ_ПОДПИСКИ = /hit your (session|weekly) limit|out of usage credits|5-hour limit|usage limit reached/i;
+const НЕТ_ДЕНЕГ_API = /credit balance is too low|insufficient[_ ]credit|billing/i;
 
 /**
  * Дежурный не смог войти — завод встаёт молча, задания копятся, и Татьяна
@@ -326,7 +385,27 @@ async function позватьЕслиНеВошёл() {
   } catch { /* нет сети — позовём на следующем часу */ }
 }
 
-дитя.on('exit', async (код) => {
-  if (код) await позватьЕслиНеВошёл();
-  process.exit(код ?? 0);
-});
+let начало = 0;
+try { начало = statSync(join(корень, имяЖурнала)).size; } catch { /* нового журнала нет */ }
+let код = await запустить();
+
+if (ЛИМИТ_ПОДПИСКИ.test(хвостЗапуска(начало))) {
+  const ключ = прочитатьEnv().ANTHROPIC_API_KEY;
+  if (ключ) {
+    writeSync(журнал, `
+[запасной ключ] ${new Date().toISOString()} подписка в лимите — перезапуск на API
+`);
+    await сказатьРедко('.запасной-ключ',
+      'Подписка Claude упёрлась в лимит. Дежурный продолжает работу на запасном ключе API — задания не встанут.');
+    начало = statSync(join(корень, имяЖурнала)).size;
+    код = await запустить({ ANTHROPIC_API_KEY: ключ });
+    if (НЕТ_ДЕНЕГ_API.test(хвостЗапуска(начало))) {
+      await сказатьРедко('.запасной-ключ-пуст',
+        'Подписка Claude в лимите, а на запасном ключе API кончились деньги. Задания подождут, пока лимит подписки обновится.');
+    }
+  }
+}
+
+if (код) await позватьЕслиНеВошёл();
+process.exit(код);
+
