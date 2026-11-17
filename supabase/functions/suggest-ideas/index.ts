@@ -9,6 +9,7 @@
 //
 // Вызов: POST { count?: number } — по умолчанию 5.
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import Anthropic from "npm:@anthropic-ai/sdk";
 import {
   TARGET_PLATFORMS,
   fetchYoutubeTrendCandidates,
@@ -788,6 +789,62 @@ async function loadStoredDecision(admin: SupabaseClient, userId: string, platfor
   };
 }
 
+// ── жюри зрителей (заказчица 17.11.2026, проба на неделю) ─────────────────
+// Gemini придумывает на три идеи больше, пятеро зрителей 25–44 голосуют,
+// в бот уходят лучшие. Жюри — догадка модели, не цифры ТикТока: оно только
+// отсеивает плоские и однотипные реплики. Нет ключа, сбой, мусор в ответе —
+// идеи уходят как раньше, первые count: генератор жюри не останавливает.
+const ЖЮРИ_ЗАПАС = 3;
+const ЖЮРИ_МОДЕЛЬ = "claude-opus-5";
+function сЗапасомДляЖюри(count: number): number {
+  return Deno.env.get("ANTHROPIC_API_KEY") ? Math.min(count + ЖЮРИ_ЗАПАС, 8) : count;
+}
+
+async function жюриЗрителей(
+  ideas: Array<Record<string, any>>,
+  count: number,
+): Promise<Array<Record<string, any>>> {
+  const ключ = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!ключ || ideas.length <= count) return ideas.slice(0, count);
+  try {
+    const anthropic = new Anthropic({ apiKey: ключ, timeout: 60_000, maxRetries: 1 });
+    const список = ideas.map((i, n) => `${n}. ${i.animal}: «${i.line}»`).join("\n");
+    const ответ = await anthropic.messages.create({
+      model: ЖЮРИ_МОДЕЛЬ,
+      max_tokens: 2000,
+      messages: [{
+        role: "user",
+        content:
+          "Ты — жюри из пяти русскоязычных зрителей ТикТока 25–44 лет: ипотечник, " +
+          "офисный работник, мама в декрете, фрилансер, скептик под пенсию. Тон " +
+          "канала — сухой взрослый чёрный юмор про деньги и работу, говорящие звери.\n\n" +
+          "Реплики-кандидаты:\n" + список + "\n\n" +
+          "Каждый зритель про каждую реплику: смешно ли (0–10) и переслал бы он её " +
+          "кому-то. Штрафуй плоское, объяснённое, мораль и однотипные формы " +
+          "(особенно «думал… оказалось»). Затем выбери " + count + " лучших с разными " +
+          "формами шутки.\nОтветь ТОЛЬКО JSON без пояснений: " +
+          '{"items":[{"n":номер,"score":среднее_0_10,"forward":сколько_из_5_переслали,' +
+          '"to":"кому перешлют","why":"одна фраза"}],"best":[номера в порядке убывания]}',
+      }],
+    });
+    const текст = ответ.content.find((b) => b.type === "text")?.text ?? "";
+    const разбор = JSON.parse(текст.slice(текст.indexOf("{"), текст.lastIndexOf("}") + 1));
+    const лучшие: number[] = (разбор.best ?? [])
+      .map(Number)
+      .filter((n: number, k: number, a: number[]) =>
+        Number.isInteger(n) && n >= 0 && n < ideas.length && a.indexOf(n) === k);
+    if (лучшие.length < count) throw new Error(`жюри выбрало ${лучшие.length} из ${count}`);
+    const оценки = new Map<number, unknown>((разбор.items ?? []).map((i: any) => [Number(i.n), i]));
+    return лучшие.slice(0, count).map((n) => ({
+      ...ideas[n],
+      jury: { ...(оценки.get(n) as object ?? {}), model: ЖЮРИ_МОДЕЛЬ, of: ideas.length },
+    }));
+  } catch (e) {
+    console.error("jury failed", { message: String(e).slice(0, 200) });
+    return ideas.slice(0, count);
+  }
+}
+
 async function handleSuggestIdeas(req: Request): Promise<Response> {
   if (req.method !== "POST") return json(405, { error: "POST only" });
 
@@ -1013,7 +1070,7 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
           contents: [{
             role: "user",
             parts: [{
-              text: `${СТИЛЬ}${ТЕМА_БЛОК[тема]}\n\nПридумай ${count} новых идей.\n` +
+              text: `${СТИЛЬ}${ТЕМА_БЛОК[тема]}\n\nПридумай ${сЗапасомДляЖюри(count)} новых идей.\n` +
                 (занятые.length ? `Эти звери сейчас отдыхают, их не бери: ${занятые.join(", ")}. Всех остальных можно, в том числе тех, кто был раньше.\n` : "") +
                 `Темы не дублируй между собой. Реплика должна быть смешной и злой, ` +
                 `без морали и без объяснений шутки.\n\n` +
@@ -1038,6 +1095,7 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
     } catch (e) {
       return json(500, { error: `Gemini не ответил: ${e instanceof Error ? e.message : String(e)}` });
     }
+    ideas = await жюриЗрителей(ideas, count);
   }
   if (ideas.length === 0) {
     return json(500, { error: "Генератор идей вернул пустой список" });
@@ -1054,6 +1112,7 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
       hook: idea.hook,
       line: idea.line,
       prompt: idea.prompt,
+      ...(idea.jury ? { jury: idea.jury } : {}),
       target_platform: targetPlatform,
       ...(targetPlatform === TARGET_PLATFORMS.TIKTOK ? { tema: тема } : {}),
       ...(targetPlatform === TARGET_PLATFORMS.TIKTOK && feedbackSchemaReady && tiktokFeedbackEnabled
@@ -1112,6 +1171,7 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
         animal: row.animal,
         hook: row.hook,
         line: row.line,
+        jury: row.jury ?? null,
         target_platform: row.target_platform,
         trend_signal: row.trend_signal ?? null,
         reference_source_id: row.reference_source_id ?? null,
