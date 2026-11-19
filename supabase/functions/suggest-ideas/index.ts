@@ -1059,6 +1059,10 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
     if (youtubeFeedbackContext) ideas = await annotateYoutubeCandidates(ideas, youtubeFeedbackContext);
     ideaSource = "novel-reference-adaptation-v0.1";
   } else {
+    // 19.11.2026: утренняя партия не вышла — Gemini ответил ошибкой через 11 с,
+    // повтора не было. Теперь три попытки с паузой, причина — в журнал.
+    const началоGemini = Date.now();
+    for (let попытка = 1; ; попытка++) {
     try {
       const { token: gToken, project } = await googleToken(admin);
       const url = `https://${REGION}-aiplatform.googleapis.com/v1/projects/${project}` +
@@ -1092,10 +1096,19 @@ async function handleSuggestIdeas(req: Request): Promise<Response> {
       if (marketIdeaContext?.active) {
         ideas = validateTikTokMarketCandidates(ideas, marketIdeaContext);
       } else if (feedbackContext) ideas = validateTikTokCandidates(ideas, feedbackContext);
+      break;
     } catch (e) {
-      return json(500, { error: `Gemini не ответил: ${e instanceof Error ? e.message : String(e)}` });
+      const текст = e instanceof Error ? e.message : String(e);
+      console.error("gemini failed", { попытка, message: текст.slice(0, 300) });
+      if (попытка >= 3) return json(500, { error: `Gemini не ответил: ${текст}` });
+      await new Promise((r) => setTimeout(r, 15_000 * попытка));
     }
-    ideas = await жюриЗрителей(ideas, count);
+    }
+    // Функции дано 150 с. Gemini с повторами съел больше минуты — жюри
+    // пропускаем, идеи важнее оценки.
+    ideas = Date.now() - началоGemini > 60_000
+      ? ideas.slice(0, count)
+      : await жюриЗрителей(ideas, count);
   }
   if (ideas.length === 0) {
     return json(500, { error: "Генератор идей вернул пустой список" });

@@ -3,6 +3,23 @@
 Восстановлено 29.07.2026 из переписки 19–26 июля (сессия `05097bb6`, 2787 записей).
 Документ отвечает на три вопроса: **что сделано**, **где остановились**, **что дальше**.
 
+> FLOW WORKER REPAIR — 2026-11-18: `DEPLOYED, LIVE GENERATION NOT VERIFIED`.
+> Устранён `cmd.exe`/argument parser failure: Claude Code получает prompt через
+> stdin и возвращает schema-validated `structured_output`. `idea-button` v40,
+> четыре изолированных Flow profile slots и owner-approved переключение только
+> после подтверждённого `quota_exhausted`; `blocked_login` возобновляется
+> отдельной owner-кнопкой после входа. Старый Gemini job закрыт `needs_review`,
+> Flow live-проверка безопасно дошла до `LOGIN_REQUIRED`; активных ложных
+> `generating` нет.
+
+> VIDEO GENERATION AUTOMATION — 2026-11-17: `READY, LIVE NOT VERIFIED`.
+> Под будущими точными prompt появились отдельные кнопки Gemini/Flow; очередь
+> и worker развёрнуты, browser-agent работает через Claude Code API в режиме
+> `--bare`, скачанный файл входит в прежний VibePost intake с точной
+> provenance. Двойной клик идемпотентен, сомнительный результат не повторяется
+> автоматически. Остался одноразовый вход Google в отдельный профиль и один
+> owner-approved live test. См. `docs/VIDEO_GENERATION_AUTOMATION.md`.
+
 > CONTENT FACTORY RECONCILIATION — 2026-09-02: VibePost remains the owner of publishing, TikTok/YouTube metrics, existing learning memory, market-reference and experiment/lesson extensions, and attribution plumbing. POST-13C is `TERMINAL FAIL`; POST-13D is `ROLLED_BACK`. No successful live Content Factory lead attribution exists. Current blocker: the Vault publisher credential does not correspond to `@ContentFactoryLeads_bot`. See `docs/CONTENT_FACTORY_INTEGRATION_ROADMAP.md`. The dated production journal below remains historical evidence and was not rewritten.
 
 > META-FIRST — 2026-09-02: `PASS/ACCEPTED` for the fixture/local scope after independent Controller re-review 03 (`0` findings). The stage adds a GET-only Meta adapter, exact provider-ID mapping, explicit-UNKNOWN Insights snapshots and Meta-specific evidence→analysis→lesson→next-hypothesis persistence by extending the existing learning memory. Deterministic tests use synthetic fixtures/PGlite only; live Meta gate is disabled, nothing was deployed, provider write operations are `0`, and Generator/Meeting/commercial canary state is unchanged. Evidence: `META_FIRST_CLOSED_CONTENT_LOOP.md` in Text Factory.
@@ -7674,3 +7691,7 @@ suggest-ideas: запрещена схема «думал… оказалось�
 
 - critic.md, раздел 0а: 15 повторяющихся замечаний из её ~470 записей 08–11.2026, с её словами и частотой. Отдельного «агента-Татьяны» не заводили: был бы дублем критика.
 - suggest-ideas: Gemini даёт count+3 идей, жюри (claude-opus-5 по ключу API, секрет ANTHROPIC_API_KEY) из 5 зрителей 25–44 выбирает лучшие; оценки в video_ideas.jury. Сбой жюри — идеи уходят как раньше. Проба: 8 → 5, оценки 6.0–7.2. До 24.11 сравнить: стали ли идеи лучше по её выбору и замерам; нет — убрать.
+
+## 19.11.2026 — утренние идеи не пришли
+
+09:00 suggest-ideas вернул 500 через 11 с: Gemini (Vertex) ответил ошибкой, повтора не было, в журнал причина не писалась. Теперь три попытки с паузой 15/30 с и console.error «gemini failed»; если Gemini занял >60 с — жюри пропускается (функции дано 150 с). Проверка preview: 53 с, 5 идей с жюри. Пропущенная партия отправлена в 15:xx.
