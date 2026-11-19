@@ -336,7 +336,8 @@ function хвостЗапуска(начало) {
   } catch { return ''; }
 }
 
-const ЛИМИТ_ПОДПИСКИ = /hit your (session|weekly) limit|out of usage credits|5-hour limit|usage limit reached/i;
+// 19.11: «You've hit your Fable limit» не ловилось — лимит любой модели и любого периода.
+const ЛИМИТ_ПОДПИСКИ = /hit your [\w -]*limit|out of usage credits|5-hour limit|usage limit reached/i;
 const НЕТ_ДЕНЕГ_API = /credit balance is too low|insufficient[_ ]credit|billing/i;
 
 /**
