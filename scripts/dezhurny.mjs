@@ -390,7 +390,27 @@ let начало = 0;
 try { начало = statSync(join(корень, имяЖурнала)).size; } catch { /* нового журнала нет */ }
 let код = await запустить();
 
-if (ЛИМИТ_ПОДПИСКИ.test(хвостЗапуска(начало))) {
+/**
+ * Деньги ключа — только на её задания (21.11: утром ключ пытались потратить
+ * на служебную ревизию). Служебные — самопроверка, ревизия, проверка связи —
+ * ждут подписку. Не смогли спросить базу — считаем, что её задания есть.
+ */
+async function естьЕёЗадания() {
+  const env = прочитатьEnv();
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) return true;
+  try {
+    const r = await fetch(
+      `${env.SUPABASE_URL}/rest/v1/claude_tasks?status=in.(new,processing)&select=text&limit=50`,
+      { headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}` },
+        signal: AbortSignal.timeout(15000) },
+    );
+    const задания = await r.json();
+    if (!Array.isArray(задания)) return true;
+    return задания.some((з) => !/^(самопроверка|ревизия|проверка связи)/i.test(String(з.text ?? '').trim()));
+  } catch { return true; }
+}
+
+if (ЛИМИТ_ПОДПИСКИ.test(хвостЗапуска(начало)) && await естьЕёЗадания()) {
   const ключ = прочитатьEnv().ANTHROPIC_API_KEY;
   if (ключ) {
     writeSync(журнал, `
