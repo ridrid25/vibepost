@@ -22,7 +22,7 @@ const url = env.SUPABASE_URL?.replace(/\/$/, '');
 const key = env.SUPABASE_SERVICE_ROLE_KEY;
 const h = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
 
-async function бот(текст, разметка) {
+async function бот(текст, разметка, кнопки) {
   const [p] = await (await fetch(
     `${url}/rest/v1/profiles?error_notify_tg_id=not.is.null` +
     `&select=error_notify_tg_id,error_notify_bot_id&limit=1`, { headers: h })).json();
@@ -36,6 +36,7 @@ async function бот(текст, разметка) {
     body: JSON.stringify({
       chat_id: p.error_notify_tg_id, text: текст,
       ...(разметка ? { parse_mode: разметка } : {}),
+      ...(кнопки ? { reply_markup: { inline_keyboard: кнопки } } : {}),
     }),
   })).json();
   if (!r.ok) throw new Error(r.description);
@@ -198,11 +199,69 @@ if (команда === 'список') {
   if (!r.ok) throw new Error(r.description);
   console.log(`ролик отправлен, ${(размер / 1048576).toFixed(1)} МБ`);
 
+  // 22.11.2026, заказчица: «почему в VibePost про хорька не появился ролик с
+  // переделанным звуком?» Починенный файл уходил только в бот, карточка
+  // держала старый, и приёмник наложил титры на старый звук. Теперь файл,
+  // присланный с номером карточки, становится её роликом. Старый файл
+  // в хранилище остаётся — откатить можно.
+  if (idРолика) {
+    const путь = `videos/${idРолика}-${Date.now()}.mp4`;
+    const up = await fetch(`${url}/storage/v1/object/post-photos/${путь}`, {
+      method: 'POST',
+      headers: { ...h, 'Content-Type': 'video/mp4', 'x-upsert': 'true' },
+      body: читать(файл),
+    });
+    if (!up.ok) throw new Error(`в бот ушло, но в карточку не встало: хранилище ${up.status}`);
+    const p = await fetch(`${url}/rest/v1/incoming_videos?id=eq.${idРолика}`, {
+      method: 'PATCH', headers: h,
+      body: JSON.stringify({ video_url: `${url}/storage/v1/object/public/post-photos/${путь}` }),
+    });
+    if (!p.ok) throw new Error(`в бот ушло, но в карточку не встало: ${p.status}`);
+    console.log('и стоит в карточке VibePost');
+  }
+
 } else if (команда === 'сказать') {
   const текст = аргументы.join(' ').trim();
   if (!текст) throw new Error('нечего говорить');
   await бот(текст);
   console.log('отправлено в бота');
+} else if (команда === 'flow-аккаунты') {
+  const [ideaId, currentRaw] = аргументы;
+  const current = Number(currentRaw);
+  if (!/^[0-9a-f-]{36}$/i.test(ideaId ?? '')) throw new Error('нужен idea id');
+  if (!Number.isInteger(current) || current < 1 || current > 4) {
+    throw new Error('текущий аккаунт должен быть 1..4');
+  }
+  const варианты = [1, 2, 3, 4]
+    .filter((slot) => slot !== current)
+    .map((slot) => ({
+      text: `Flow: аккаунт ${slot}`,
+      callback_data: `genacct:flow:${ideaId}:${slot}`,
+    }));
+  await бот(
+    `Лимит Flow у аккаунта ${current} закончился до нажатия Generate.\n\n` +
+    'Выберите другой уже авторизованный аккаунт. Самостоятельно переключать аккаунты я не буду.',
+    undefined,
+    [варианты.slice(0, 2), варианты.slice(2)],
+  );
+  console.log('кнопки аккаунтов Flow отправлены');
+} else if (команда === 'flow-вход') {
+  const [ideaId, slotRaw] = аргументы;
+  const slot = Number(slotRaw);
+  if (!/^[0-9a-f-]{36}$/i.test(ideaId ?? '')) throw new Error('нужен idea id');
+  if (!Number.isInteger(slot) || slot < 1 || slot > 4) {
+    throw new Error('аккаунт должен быть 1..4');
+  }
+  await бот(
+    `Flow: аккаунт ${slot} не вошёл в Google.\n\n` +
+    'Войдите в открытом на компьютере окне, закройте Chrome и нажмите кнопку ниже.',
+    undefined,
+    [[{
+      text: '✅ Вошла — продолжить Flow',
+      callback_data: `genresume:flow:${ideaId}:${slot}`,
+    }]],
+  );
+  console.log('кнопка продолжения Flow отправлена');
 } else if (команда === 'блок') {
   // Любой текст одним блоком с кнопкой копирования: промпты для Lovable,
   // куски конфигов. Отличается от «промпт» тем, что не разбирает JSON.
@@ -260,6 +319,7 @@ if (команда === 'список') {
     throw new Error(`промпт ${компакт.length} знаков — предел 4096, сокращать.`);
   }
   const блок = `<pre>${экран(компакт)}</pre>`;
+  let generationIdeaId = null;
   if (taskId) {
     const taskResponse = await fetch(
       `${url}/rest/v1/claude_tasks?id=eq.${taskId}` +
@@ -269,6 +329,7 @@ if (команда === 'список') {
     if (!taskResponse.ok) throw new Error('не удалось найти idea_id задания');
     const [task] = await taskResponse.json();
     if (task?.idea_id) {
+      generationIdeaId = task.idea_id;
       const targetPlatform = task.video_ideas?.target_platform ?? 'tiktok';
       if (!['tiktok', 'youtube_shorts'].includes(targetPlatform)) {
         throw new Error('неподдерживаемая площадка prompt provenance');
@@ -292,7 +353,10 @@ if (команда === 'список') {
   // A selected-task prompt is delivered only after its canonical provenance
   // has committed. Standalone operator blocks (without --task) keep the old flow.
   await бот(экран(шапка), 'HTML');
-  await бот(блок, 'HTML');
+  await бот(блок, 'HTML', generationIdeaId ? [
+    [{ text: '🎬 Сделать в Gemini', callback_data: `gen:gemini:${generationIdeaId}` }],
+    [{ text: '🎞 Сделать во Flow', callback_data: `gen:flow:${generationIdeaId}` }],
+  ] : null);
   console.log(`отправлено, ${компакт.length} знаков`);
 } else {
   console.log('команды: список | взять [кто] | ролик <файл> [id-ролика] \"подпись\" | готово <id> | сбой <id> "причина" | доделано <id> | сказать "текст" | промпт <файл.json> [--task <id>] [подпись]');
